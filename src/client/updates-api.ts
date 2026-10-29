@@ -1,10 +1,15 @@
 /**
  * Updates API
- * Platform update operations
+ * Cloudron platform (box) update operations
  */
 
 import { CloudronError } from "../errors.js"
-import type { UpdateInfo, ValidationResult } from "../types.js"
+import type {
+  BoxUpdateInfo,
+  BoxUpdateResponse,
+  TaskStarted,
+  ValidationResult,
+} from "../types.js"
 import type { HttpClient } from "./http-client.js"
 
 /**
@@ -24,45 +29,51 @@ export class UpdatesApi {
   ) {}
 
   /**
-   * Check for available Cloudron platform updates
-   * GET /api/v1/updater/updates
-   * @returns Update information including availability and version
+   * GET /api/v1/updater/box_update
+   * Returns the update Cloudron's own checker found, or null when up to date.
    */
-  async checkUpdates(): Promise<UpdateInfo> {
-    // Per OpenAPI spec: GET /updater/updates returns { updates: UpdateInfo }
-    const response = await this.http.get<{ updates: UpdateInfo }>(
-      "/api/v1/updater/updates",
+  async checkUpdates(): Promise<BoxUpdateInfo | null> {
+    const response = await this.http.get<BoxUpdateResponse>(
+      "/api/v1/updater/box_update",
     )
-    return response.updates
+    return response.update ?? null
   }
 
   /**
-   * Apply available Cloudron platform update (DESTRUCTIVE OPERATION)
-   * POST /api/v1/updater/update
-   * Performs pre-flight validation before proceeding
-   * @returns Task ID for tracking update progress
+   * POST /api/v1/updater/box_update (DESTRUCTIVE: restarts the platform)
+   * @param expectedVersion - must match the pending update, so a stale
+   *   confirmation cannot apply a different release
    */
-  async applyUpdate(): Promise<string> {
-    // Pre-flight validation if validator is provided
+  async applyUpdate(
+    expectedVersion: string,
+    skipBackup = false,
+  ): Promise<string> {
+    const update = await this.checkUpdates()
+    if (!update) {
+      throw new CloudronError("No platform update is available")
+    }
+    if (update.version !== expectedVersion) {
+      throw new CloudronError(
+        `Pending update is v${update.version}, not v${expectedVersion}. Re-check with cloudron_check_updates.`,
+      )
+    }
+
     if (this.validator) {
       const validation = await this.validator.validateApplyUpdate()
-
-      // If validation fails, throw error with validation details
       if (!validation.valid) {
-        const errorMessage = `Pre-flight validation failed for apply_update:\n${validation.errors.join("\n")}`
-        throw new CloudronError(errorMessage)
+        throw new CloudronError(
+          `Pre-flight validation failed for apply_update:\n${validation.errors.join("\n")}`,
+        )
       }
     }
 
-    // Per OpenAPI spec: POST /updater/update
-    const response = await this.http.post<{ taskId: string }>(
-      "/api/v1/updater/update",
+    const response = await this.http.post<TaskStarted>(
+      "/api/v1/updater/box_update",
+      { skipBackup },
     )
-
-    if (!response.taskId) {
+    if (!response?.taskId) {
       throw new CloudronError("Apply update response missing taskId")
     }
-
     return response.taskId
   }
 }

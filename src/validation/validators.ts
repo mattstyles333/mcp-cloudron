@@ -14,16 +14,13 @@ export function isValidEmail(email: string): boolean {
 }
 
 /**
- * Validate password strength
- * Requirements: 8+ characters, 1 uppercase letter, 1 number
+ * Validate password length the way Cloudron does (users.validatePassword):
+ * 8 to 256 characters, no character-class rules
  * @param password - Password to validate
- * @returns true if password meets strength requirements
+ * @returns true if Cloudron will accept the password
  */
 export function isValidPassword(password: string): boolean {
-  if (password.length < 8) return false
-  if (!/[A-Z]/.test(password)) return false // At least 1 uppercase
-  if (!/[0-9]/.test(password)) return false // At least 1 number
-  return true
+  return password.length >= 8 && password.length <= 256
 }
 
 /**

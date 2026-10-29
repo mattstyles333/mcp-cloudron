@@ -1,201 +1,163 @@
 /**
- * HTTP Client unit tests
- * Tests error propagation, timeout, and constructor validation
- * so these concerns don't need to be tested per-endpoint.
+ * HttpClient: transport behaviour against real Response objects
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { HttpClient } from "../../src/client/http-client.js"
-import { CloudronError } from "../../src/errors.js"
+import { describe, expect, it } from "vitest"
+import { HttpClient, normalizeBaseUrl } from "../../src/client/http-client"
+import { CloudronAuthError, CloudronError } from "../../src/errors"
+import { BASE_URL, TOKEN, useFakeCloudron } from "../helpers/cloudron-fake"
+
+const client = () => new HttpClient({ baseUrl: BASE_URL, token: TOKEN })
+
+async function rejection(promise: Promise<unknown>): Promise<CloudronError> {
+  try {
+    await promise
+  } catch (error) {
+    if (error instanceof CloudronError) return error
+    throw error
+  }
+  throw new Error("expected the request to fail")
+}
+
+describe("normalizeBaseUrl", () => {
+  it("accepts https and strips paths and trailing slashes", () => {
+    expect(normalizeBaseUrl("https://my.example.com/")).toBe(
+      "https://my.example.com",
+    )
+    expect(normalizeBaseUrl("https://my.example.com:8443/api")).toBe(
+      "https://my.example.com:8443",
+    )
+  })
+
+  it("refuses plain http for remote hosts so the token is never sent in clear", () => {
+    expect(() => normalizeBaseUrl("http://my.example.com")).toThrow(/https/)
+  })
+
+  it("allows plain http for localhost", () => {
+    expect(normalizeBaseUrl("http://localhost:3000")).toBe(
+      "http://localhost:3000",
+    )
+    expect(normalizeBaseUrl("http://127.0.0.1")).toBe("http://127.0.0.1")
+  })
+
+  it("rejects garbage", () => {
+    expect(() => normalizeBaseUrl("my.example.com")).toThrow(/not a valid URL/)
+  })
+})
 
 describe("HttpClient", () => {
-  const validConfig = {
-    baseUrl: "https://test.cloudron.io",
-    token: "test-token",
-  }
+  it("sends the bearer token and JSON body", async () => {
+    const { fake } = useFakeCloudron({
+      "POST /api/v1/groups": { status: 201, body: { id: "g1", name: "ops" } },
+    })
 
-  beforeEach(() => {
-    vi.clearAllMocks()
+    const result = await client().post("/api/v1/groups", { name: "ops" })
+
+    expect(result).toEqual({ id: "g1", name: "ops" })
+    const [request] = fake.requests
+    expect(request?.headers.authorization).toBe(`Bearer ${TOKEN}`)
+    expect(request?.headers["content-type"]).toBe("application/json")
+    expect(request?.body).toEqual({ name: "ops" })
   })
 
-  describe("constructor", () => {
-    it("should throw when baseUrl is missing", () => {
-      expect(() => new HttpClient({ baseUrl: "", token: "t" })).toThrow(
-        CloudronError,
-      )
-      expect(() => new HttpClient({ baseUrl: "", token: "t" })).toThrow(
-        "baseUrl is required",
-      )
+  it("does not send a body or content type on GET", async () => {
+    const { fake } = useFakeCloudron({
+      "GET /api/v1/cloudron/status": { body: { version: "10.1.6" } },
     })
-
-    it("should throw when token is missing", () => {
-      expect(
-        () => new HttpClient({ baseUrl: "https://example.com", token: "" }),
-      ).toThrow(CloudronError)
-      expect(
-        () => new HttpClient({ baseUrl: "https://example.com", token: "" }),
-      ).toThrow("token is required")
-    })
-
-    it("should strip trailing slash from baseUrl", () => {
-      const client = new HttpClient({
-        baseUrl: "https://example.com/",
-        token: "t",
-      })
-      // Verify via a request URL construction — we check that the base URL
-      // doesn't produce double slashes by mocking fetch and inspecting the URL.
-      const mockFetch = vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        ),
-      )
-      global.fetch = mockFetch
-
-      client.get("/api/test")
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://example.com/api/test",
-        expect.any(Object),
-      )
-    })
+    await client().get("/api/v1/cloudron/status")
+    expect(fake.requests[0]?.body).toBeUndefined()
+    expect(fake.requests[0]?.headers["content-type"]).toBeUndefined()
   })
 
-  describe("request success", () => {
-    it("should return parsed JSON body on successful GET", async () => {
-      const mockData = { apps: [{ id: "app-1" }] }
-      global.fetch = vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify(mockData), { status: 200 }),
-        ),
-      )
-
-      const client = new HttpClient(validConfig)
-      const result = await client.get<typeof mockData>("/api/v1/apps")
-
-      expect(result).toEqual(mockData)
-    })
-
-    it("should send Bearer token in Authorization header", async () => {
-      global.fetch = vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({}), { status: 200 })),
-      )
-
-      const client = new HttpClient(validConfig)
-      await client.get("/api/test")
-
-      expect(global.fetch).toHaveBeenCalledWith(
-        "https://test.cloudron.io/api/test",
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer test-token",
-          }),
-        }),
-      )
-    })
+  // Regression: upstream called response.json() on 204 and reported a
+  // successful delete as "Network error: Unexpected end of JSON input"
+  it("treats 204 No Content as success", async () => {
+    useFakeCloudron({ "DELETE /api/v1/users/uid-1": { status: 204 } })
+    await expect(
+      client().delete("/api/v1/users/uid-1"),
+    ).resolves.toBeUndefined()
   })
 
-  describe("error responses", () => {
-    it("should throw CloudronError with extracted message on 4xx", async () => {
-      global.fetch = vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ message: "Not found" }), {
-            status: 404,
-            statusText: "Not Found",
-          }),
-        ),
-      )
-
-      const client = new HttpClient(validConfig)
-
-      await expect(client.get("/api/v1/apps/nonexistent")).rejects.toThrow(
-        CloudronError,
-      )
-      await expect(client.get("/api/v1/apps/nonexistent")).rejects.toThrow(
-        "Not found",
-      )
-    })
-
-    it("should throw CloudronError on 5xx", async () => {
-      global.fetch = vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ message: "Server error" }), {
-            status: 500,
-            statusText: "Internal Server Error",
-          }),
-        ),
-      )
-
-      const client = new HttpClient(validConfig)
-
-      await expect(client.get("/api/test")).rejects.toThrow(CloudronError)
-      await expect(client.get("/api/test")).rejects.toThrow("Server error")
-    })
-
-    it("should use default message if error body is not JSON", async () => {
-      global.fetch = vi.fn(() =>
-        Promise.resolve(
-          new Response("plain text error", {
-            status: 502,
-            statusText: "Bad Gateway",
-          }),
-        ),
-      )
-
-      const client = new HttpClient(validConfig)
-
-      await expect(client.get("/api/test")).rejects.toThrow(CloudronError)
-      await expect(client.get("/api/test")).rejects.toThrow(
-        "Cloudron API error: 502 Bad Gateway",
-      )
-    })
+  it("treats a 202 with an empty body as success", async () => {
+    useFakeCloudron({ "POST /api/v1/services/mysql/restart": { status: 202 } })
+    await expect(
+      client().post("/api/v1/services/mysql/restart"),
+    ).resolves.toBeUndefined()
   })
 
-  describe("network errors", () => {
-    it("should throw CloudronError with NETWORK_ERROR code on fetch rejection", async () => {
-      global.fetch = vi.fn(() =>
-        Promise.reject(new Error("Connection refused")),
-      )
+  it("encodes query parameters and skips undefined ones", async () => {
+    const { fake } = useFakeCloudron({
+      "GET /api/v1/eventlog": { body: { eventlogs: [] } },
+    })
+    await client().get("/api/v1/eventlog", {
+      query: { search: "a b&c", page: 2, from: undefined },
+    })
+    const query = fake.requests[0]?.query
+    expect(query?.get("search")).toBe("a b&c")
+    expect(query?.get("page")).toBe("2")
+    expect(query?.has("from")).toBe(false)
+  })
 
-      const client = new HttpClient(validConfig)
+  it("uses Cloudron's error message and names the request", async () => {
+    useFakeCloudron({
+      "POST /api/v1/apps": {
+        status: 400,
+        body: { status: "Bad Request", message: "subdomain is required" },
+      },
+    })
+    const error = await rejection(client().post("/api/v1/apps", {}))
+    expect(error).toBeInstanceOf(CloudronError)
+    expect(error.statusCode).toBe(400)
+    expect(error.message).toBe("subdomain is required (POST /api/v1/apps)")
+  })
 
-      await expect(client.get("/api/test")).rejects.toThrow(CloudronError)
-      await expect(client.get("/api/test")).rejects.toThrow(
-        "Network error: Connection refused",
-      )
+  it("maps 401/403 to CloudronAuthError without echoing the token", async () => {
+    useFakeCloudron({
+      "POST /api/v1/apps/app-1/restart": {
+        status: 403,
+        body: { message: "access token does not have this scope" },
+      },
+    })
+    const error = await rejection(client().post("/api/v1/apps/app-1/restart"))
+    expect(error).toBeInstanceOf(CloudronAuthError)
+    expect(error.statusCode).toBe(403)
+    expect(error.message).not.toContain(TOKEN)
+  })
 
-      try {
-        await client.get("/api/test")
-      } catch (error) {
-        expect(error).toBeInstanceOf(CloudronError)
-        if (error instanceof CloudronError) {
-          expect(error.code).toBe("NETWORK_ERROR")
+  it("reports a non-JSON success body clearly", async () => {
+    useFakeCloudron({ "GET /api/v1/cloudron/status": { body: "<html>" } })
+    await expect(client().get("/api/v1/cloudron/status")).rejects.toThrow(
+      /non-JSON/,
+    )
+  })
+
+  it("reads text endpoints as text", async () => {
+    useFakeCloudron({
+      "GET /api/v1/apps/app-1/logs": {
+        body: '{"message":"a"}\n{"message":"b"}',
+      },
+    })
+    await expect(client().getText("/api/v1/apps/app-1/logs")).resolves.toBe(
+      '{"message":"a"}\n{"message":"b"}',
+    )
+  })
+
+  // Regression: Cloudron pages at 25 rows, so upstream's list_users stopped at 25
+  it("walks every page of a paginated list", async () => {
+    const users = Array.from({ length: 230 }, (_, i) => ({ id: `u${i}` }))
+    const { fake } = useFakeCloudron({
+      "GET /api/v1/users": request => {
+        const page = Number(request.query.get("page"))
+        const perPage = Number(request.query.get("per_page"))
+        return {
+          body: { users: users.slice((page - 1) * perPage, page * perPage) },
         }
-      }
+      },
     })
-  })
 
-  describe("timeout", () => {
-    it("should throw CloudronError with TIMEOUT code on AbortError", async () => {
-      const client = new HttpClient(validConfig)
+    const all = await client().getAllPages("/api/v1/users", "users")
 
-      // Simulate what happens when AbortController aborts the fetch:
-      // the fetch rejects with a DOMException whose name is "AbortError"
-      global.fetch = vi.fn(() =>
-        Promise.reject(
-          new DOMException("The operation was aborted", "AbortError"),
-        ),
-      )
-
-      await expect(client.get("/api/test")).rejects.toThrow(CloudronError)
-
-      try {
-        await client.get("/api/test")
-      } catch (error) {
-        expect(error).toBeInstanceOf(CloudronError)
-        if (error instanceof CloudronError) {
-          expect(error.code).toBe("TIMEOUT")
-        }
-      }
-    })
+    expect(all).toHaveLength(230)
+    expect(fake.requests.map(r => r.query.get("page"))).toEqual(["1", "2", "3"])
   })
 })

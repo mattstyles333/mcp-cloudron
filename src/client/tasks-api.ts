@@ -8,30 +8,33 @@ import type { TaskStatus, TaskStatusRaw } from "../types.js"
 import type { HttpClient } from "./http-client.js"
 
 /**
- * Normalize raw task status from API to our TaskStatus interface
+ * Normalize raw task status from API to our TaskStatus interface.
+ * Cloudron sets `active` while a task is running or queued; once it is false
+ * the task is finished and `success`/`error` say how.
  */
-function normalizeTaskStatus(raw: TaskStatusRaw): TaskStatus {
-  // Determine state from boolean flags
+export function normalizeTaskStatus(raw: TaskStatusRaw): TaskStatus {
   let state: TaskStatus["state"]
   if (raw.success === true) {
     state = "success"
   } else if (raw.error) {
-    state = "error"
-  } else if (raw.active === true) {
+    state = raw.error.code === "stopped" ? "stopped" : "error"
+  } else if (raw.running === true) {
     state = "running"
-  } else if (raw.pending === true) {
+  } else if (raw.active === true || raw.pending === true) {
     state = "pending"
   } else {
-    // Default to running if no clear state (task in progress)
     state = "running"
   }
 
   const result: TaskStatus = {
-    id: raw.id,
+    id: String(raw.id),
     state,
     progress: raw.percent ?? 0,
     message: raw.message ?? "",
-    result: raw.result,
+  }
+  if (raw.type) result.type = raw.type
+  if (raw.result !== undefined && raw.result !== null) {
+    result.result = raw.result
   }
 
   if (raw.error) {
@@ -45,6 +48,13 @@ function normalizeTaskStatus(raw: TaskStatusRaw): TaskStatus {
   return result
 }
 
+function taskPath(taskId: string, suffix = ""): string {
+  if (!taskId) {
+    throw new CloudronError("taskId is required")
+  }
+  return `/api/v1/tasks/${encodeURIComponent(taskId)}${suffix}`
+}
+
 /**
  * Tasks API for managing async operations
  */
@@ -52,32 +62,19 @@ export class TasksApi {
   constructor(private readonly http: HttpClient) {}
 
   /**
-   * Get task status for async operations
    * GET /api/v1/tasks/:taskId
-   * Normalizes the raw API response to our TaskStatus interface
    */
   async getTaskStatus(taskId: string): Promise<TaskStatus> {
-    if (!taskId) {
-      throw new CloudronError("taskId is required")
-    }
-    const raw = await this.http.get<TaskStatusRaw>(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}`,
-    )
+    const raw = await this.http.get<TaskStatusRaw>(taskPath(taskId))
     return normalizeTaskStatus(raw)
   }
 
   /**
-   * Cancel a running async operation (kill switch)
-   * DELETE /api/v1/tasks/:taskId
-   * @returns Updated task status with 'cancelled' state
+   * Stop a running task: POST /api/v1/tasks/:taskId/stop (204), then read
+   * the task back so the caller sees its final state.
    */
   async cancelTask(taskId: string): Promise<TaskStatus> {
-    if (!taskId) {
-      throw new CloudronError("taskId is required")
-    }
-    const raw = await this.http.delete<TaskStatusRaw>(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}`,
-    )
-    return normalizeTaskStatus(raw)
+    await this.http.post(taskPath(taskId, "/stop"))
+    return await this.getTaskStatus(taskId)
   }
 }

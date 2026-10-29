@@ -7,38 +7,56 @@
 import {
   INSTALL_DEFAULT_STORAGE_MB,
   RESTORE_MIN_STORAGE_MB,
-  STORAGE_CRITICAL_THRESHOLD,
-  STORAGE_WARNING_THRESHOLD,
 } from "../config.js"
 import { CloudronError, isCloudronError } from "../errors.js"
 import type {
   App,
+  AppStoreApp,
   Backup,
+  BoxUpdateInfo,
   CloneAppParams,
-  DiskUsageResponse,
   ManifestValidationResult,
   StorageInfo,
-  SystemStatus,
-  UpdateInfo,
   User,
   ValidatableOperation,
   ValidationResult,
 } from "../types.js"
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
 /**
- * Interface for data fetching operations needed by validation
- * Allows dependency injection for testing
+ * Data the validation service reads (dependency injection for tests)
  */
 export interface ValidationDataProvider {
   getApp(appId: string): Promise<App>
   listApps(): Promise<App[]>
+  listAppBackups(appId: string): Promise<Backup[]>
   getUser(userId: string): Promise<User>
   listUsers(): Promise<User[]>
-  getStatus(): Promise<SystemStatus>
-  getDiskUsage(): Promise<DiskUsageResponse>
+  checkStorage(requiredMB?: number): Promise<StorageInfo>
   listBackups(): Promise<Backup[]>
-  checkUpdates(): Promise<UpdateInfo>
-  searchApps(query?: string): Promise<{ id: string; description?: string }[]>
+  checkUpdates(): Promise<BoxUpdateInfo | null>
+  getAppStoreApp(appStoreId: string): Promise<AppStoreApp>
+}
+
+function emptyResult(): ValidationResult {
+  return { valid: true, errors: [], warnings: [], recommendations: [] }
+}
+
+function finish<T extends { valid: boolean; errors: string[] }>(result: T): T {
+  result.valid = result.errors.length === 0
+  return result
+}
+
+function isNotFound(error: unknown): boolean {
+  return isCloudronError(error) && error.statusCode === 404
+}
+
+function isRecent(backup: Backup | undefined): boolean {
+  return (
+    backup !== undefined &&
+    Date.now() - new Date(backup.creationTime).getTime() < DAY_MS
+  )
 }
 
 /**
@@ -48,243 +66,112 @@ export class ValidationService {
   constructor(private readonly dataProvider: ValidationDataProvider) {}
 
   /**
-   * Check available disk space for pre-flight validation
-   * @param requiredMB - Optional required disk space in MB
-   * @returns Storage info with availability and threshold checks
-   */
-  async checkStorage(requiredMB?: number): Promise<StorageInfo> {
-    const diskUsage = await this.dataProvider.getDiskUsage()
-
-    // Find the root filesystem or the one with largest space?
-    // Spec example shows "/dev/nvme0n1p2" with mountpoint "/"
-    // We'll look for mountpoint "/"
-    let rootFs = Object.values(diskUsage.usage.filesystems).find(
-      fs => fs.mountpoint === "/",
-    )
-
-    if (!rootFs) {
-      // Fallback to first one if root not found
-      rootFs = Object.values(diskUsage.usage.filesystems)[0]
-    }
-
-    if (!rootFs) {
-      throw new CloudronError("Disk information not available")
-    }
-
-    // Convert bytes to MB
-    const available_mb = Math.floor(rootFs.available / 1024 / 1024)
-    const total_mb = Math.floor(rootFs.size / 1024 / 1024)
-    const used_mb = Math.floor(rootFs.used / 1024 / 1024)
-
-    // Check if sufficient space available (if requiredMB provided)
-    const sufficient =
-      requiredMB !== undefined ? available_mb >= requiredMB : true
-
-    // Warning threshold: available < configured percentage of total
-    const warning = available_mb < total_mb * STORAGE_WARNING_THRESHOLD
-
-    // Critical threshold: available < configured percentage of total
-    const critical = available_mb < total_mb * STORAGE_CRITICAL_THRESHOLD
-
-    return {
-      available_mb,
-      total_mb,
-      used_mb,
-      sufficient,
-      warning,
-      critical,
-    }
-  }
-
-  /**
-   * Validate a destructive operation before execution (pre-flight safety check)
-   * @param operation - Type of operation to validate
-   * @param resourceId - ID of the resource being operated on
-   * @returns Validation result with errors, warnings, and recommendations
+   * Validate a destructive operation before execution
+   * @param resourceId - appId (uninstall_app, restore_app) or userId (delete_user)
+   * @param backupId - required for restore_app
    */
   async validateOperation(
     operation: ValidatableOperation,
     resourceId: string,
+    backupId?: string,
   ): Promise<ValidationResult> {
     if (!resourceId) {
       throw new CloudronError("resourceId is required for operation validation")
     }
 
-    const result: ValidationResult = {
-      valid: true,
-      errors: [],
-      warnings: [],
-      recommendations: [],
-    }
-
     switch (operation) {
       case "uninstall_app":
-        await this.validateUninstallApp(resourceId, result)
-        break
+        return await this.validateUninstallApp(resourceId)
       case "delete_user":
-        await this.validateDeleteUser(resourceId, result)
-        break
-      case "restore_backup":
-        await this.validateRestoreBackup(resourceId, result)
-        break
+        return await this.validateDeleteUser(resourceId)
+      case "restore_app":
+        if (!backupId) {
+          throw new CloudronError(
+            "backupId is required to validate restore_app",
+          )
+        }
+        return await this.validateRestoreOperation(resourceId, backupId)
       default:
         throw new CloudronError(
-          `Invalid operation type: ${operation}. Valid options: uninstall_app, delete_user, restore_backup`,
+          `Invalid operation type: ${operation}. Valid options: uninstall_app, delete_user, restore_app`,
         )
     }
-
-    // Set valid to false if there are any blocking errors
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
-
-    return result
   }
 
   /**
-   * Validate uninstall_app operation
-   * Checks: app exists, no dependent apps, backup exists
+   * Checks: app exists, app state, and whether a backup from the last day exists
    */
-  async validateUninstallApp(
-    appId: string,
-    result: ValidationResult,
-  ): Promise<void> {
+  async validateUninstallApp(appId: string): Promise<ValidationResult> {
+    const result = emptyResult()
     try {
-      // Check if app exists
       const app = await this.dataProvider.getApp(appId)
 
-      // Check app state - warn if pending operations
       if (app.installationState !== "installed") {
         result.warnings.push(
           `App is in state '${app.installationState}', not 'installed'. Uninstall may fail or behave unexpectedly.`,
         )
       }
 
-      // Recommendation: Create backup before uninstall
-      result.recommendations.push(
-        "Create a backup before uninstalling to preserve app data and configuration.",
-      )
+      const [latest] = await this.dataProvider.listAppBackups(appId)
+      if (!latest) {
+        result.warnings.push(
+          `${app.fqdn} has no backups. Its data cannot be recovered after uninstall.`,
+        )
+      } else if (!isRecent(latest)) {
+        result.warnings.push(
+          `Newest backup of ${app.fqdn} is from ${latest.creationTime}. Changes since then will be lost.`,
+        )
+      }
 
-      // TODO: Check for dependent apps (requires app dependency API endpoint)
-      // For now, add as recommendation
       result.recommendations.push(
-        "Verify no other apps depend on this app before uninstalling.",
-      )
-
-      // Check if recent backup exists (within last 24 hours)
-      result.recommendations.push(
-        "Ensure a recent backup exists for disaster recovery.",
+        "Run cloudron_backup_app first if the app's current data matters.",
       )
     } catch (error) {
-      if (isCloudronError(error) && error.statusCode === 404) {
-        result.errors.push(`App with ID '${appId}' does not exist.`)
-      } else {
-        throw error
-      }
+      if (!isNotFound(error)) throw error
+      result.errors.push(`App with ID '${appId}' does not exist.`)
     }
+    return finish(result)
   }
 
   /**
-   * Validate delete_user operation
-   * Checks: user exists, not last admin, not self-deletion
+   * Checks: user exists and is not the last owner
    */
-  async validateDeleteUser(
-    userId: string,
-    result: ValidationResult,
-  ): Promise<void> {
+  async validateDeleteUser(userId: string): Promise<ValidationResult> {
+    const result = emptyResult()
     try {
-      // Check if user exists
-      const targetUser = await this.dataProvider.getUser(userId)
+      const target = await this.dataProvider.getUser(userId)
 
-      // Get all users to check admin count
-      const allUsers = await this.dataProvider.listUsers()
-
-      // Check if user is the last admin
-      if (targetUser.role === "admin") {
-        const adminCount = allUsers.filter(u => u.role === "admin").length
-        if (adminCount <= 1) {
+      if (target.role === "owner") {
+        const owners = (await this.dataProvider.listUsers()).filter(
+          u => u.role === "owner",
+        )
+        if (owners.length <= 1) {
           result.errors.push(
-            "Cannot delete the last admin user. Promote another user to admin first.",
+            "Cannot delete the last owner. Make another user an owner first.",
           )
         }
       }
 
-      // Recommendations
       result.recommendations.push(
-        "Ensure user is not currently logged in before deletion.",
-      )
-      result.recommendations.push(
-        "Transfer ownership of user data/apps before deletion if needed.",
-      )
-      result.recommendations.push(
-        "Consider disabling the user account instead of deleting if data retention is needed.",
+        "Consider deactivating the user instead if their data should be kept.",
       )
     } catch (error) {
-      if (isCloudronError(error) && error.statusCode === 404) {
-        result.errors.push(`User with ID '${userId}' does not exist.`)
-      } else {
-        throw error
-      }
+      if (!isNotFound(error)) throw error
+      result.errors.push(`User with ID '${userId}' does not exist.`)
     }
+    return finish(result)
   }
 
   /**
-   * Validate restore_backup operation
-   * Checks: backup exists, backup integrity valid, sufficient storage
-   */
-  async validateRestoreBackup(
-    _backupId: string,
-    result: ValidationResult,
-  ): Promise<void> {
-    try {
-      // Check storage sufficiency using configured minimum
-      const storageInfo = await this.checkStorage(RESTORE_MIN_STORAGE_MB)
-
-      if (!storageInfo.sufficient) {
-        result.errors.push(
-          `Insufficient disk space for restore. Available: ${storageInfo.available_mb} MB, Required: ${RESTORE_MIN_STORAGE_MB} MB`,
-        )
-      }
-
-      if (storageInfo.critical) {
-        result.errors.push(
-          "CRITICAL: Less than 5% disk space remaining. Restore operation blocked.",
-        )
-      } else if (storageInfo.warning) {
-        result.warnings.push(
-          "WARNING: Less than 10% disk space remaining. Monitor disk usage during restore.",
-        )
-      }
-
-      result.recommendations.push("Verify backup integrity before restore.")
-      result.recommendations.push(
-        "Ensure all apps are stopped before restore to prevent data corruption.",
-      )
-      result.recommendations.push(
-        "Create a new backup of current state before restore for rollback capability.",
-      )
-    } catch (error) {
-      if (error instanceof CloudronError) {
-        result.errors.push(`Storage check failed: ${error.message}`)
-      } else {
-        throw error
-      }
-    }
-  }
-
-  /**
-   * Validate app manifest before installation (F23a pre-flight safety check)
-   * Checks: F36 storage sufficient, dependencies available, configuration schema valid
-   * @param appId - The app ID to validate from App Store
-   * @param requiredMB - Optional disk space requirement in MB (defaults to INSTALL_DEFAULT_STORAGE_MB)
-   * @returns Validation result with errors and warnings
+   * Validate an App Store app before installation
+   * Checks: app exists in the App Store, root disk has room
    */
   async validateManifest(
-    appId: string,
+    appStoreId: string,
     requiredMB: number = INSTALL_DEFAULT_STORAGE_MB,
   ): Promise<ManifestValidationResult> {
-    if (!appId) {
-      throw new CloudronError("appId is required for manifest validation")
+    if (!appStoreId) {
+      throw new CloudronError("appStoreId is required for manifest validation")
     }
 
     const result: ManifestValidationResult = {
@@ -294,292 +181,179 @@ export class ValidationService {
     }
 
     try {
-      // Step 1: Fetch app manifest from App Store
-      const apps = await this.dataProvider.searchApps(appId)
-      const app = apps.find(a => a.id === appId)
-
-      if (!app) {
-        result.errors.push(`App not found in App Store: ${appId}`)
-        result.valid = false
-        return result
-      }
-
-      // Step 2: Check F36 storage sufficient for installation
-      const storageInfo = await this.checkStorage(requiredMB)
-
-      if (storageInfo.critical) {
-        result.errors.push(
-          `CRITICAL: Less than 5% disk space remaining (${storageInfo.available_mb}MB available). Installation blocked.`,
-        )
-      } else if (!storageInfo.sufficient) {
-        result.errors.push(
-          `Insufficient disk space: ${storageInfo.available_mb}MB available, ${requiredMB}MB required.`,
-        )
-      } else if (storageInfo.warning) {
+      const app = await this.dataProvider.getAppStoreApp(appStoreId)
+      if (app.manifest.addons && "docker" in app.manifest.addons) {
         result.warnings.push(
-          `WARNING: Less than 10% disk space remaining (${storageInfo.available_mb}MB available). Monitor disk usage after installation.`,
+          "This app uses the docker addon; Cloudron only lets the owner role install it, and API tokens act as admin.",
         )
       }
-
-      // Step 3: Check dependencies available in catalog
-      if (app.description?.toLowerCase().includes("requires")) {
-        result.warnings.push(
-          "App may have dependencies. Verify all required addons are available.",
-        )
-      }
-
-      // Step 4: Validate configuration schema
-      result.warnings.push(
-        "Ensure app configuration matches Cloudron specification after installation.",
-      )
     } catch (error) {
-      if (error instanceof CloudronError) {
-        result.errors.push(`Manifest validation failed: ${error.message}`)
-      } else {
-        throw error
-      }
+      if (!isNotFound(error)) throw error
+      result.errors.push(`App not found in App Store: ${appStoreId}`)
+      return finish(result)
     }
 
-    // Set valid to false if there are any blocking errors
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
-
-    return result
+    this.addStorageFindings(
+      await this.dataProvider.checkStorage(requiredMB),
+      requiredMB,
+      "installation",
+      result,
+    )
+    return finish(result)
   }
 
   /**
-   * Validate clone operation
-   * Checks: source app exists, target location available
+   * Checks: source app installed, target location free, backup belongs to the app
    */
   async validateCloneOperation(
     appId: string,
     params: CloneAppParams,
   ): Promise<ValidationResult> {
-    const result: ValidationResult = {
-      valid: true,
-      errors: [],
-      warnings: [],
-      recommendations: [],
-    }
-
+    const result = emptyResult()
     try {
-      // Check if source app exists
       const app = await this.dataProvider.getApp(appId)
-
-      // Check app state
       if (app.installationState !== "installed") {
         result.errors.push(
           `Cannot clone app in state '${app.installationState}'. App must be 'installed'.`,
         )
       }
 
-      // Check if target location might conflict
-      const apps = await this.dataProvider.listApps()
-      const targetDomain = params.domain ?? app.domain
-      const conflictingApp = apps.find(
-        a => a.location === params.location && a.domain === targetDomain,
+      const conflict = (await this.dataProvider.listApps()).find(
+        a => a.subdomain === params.subdomain && a.domain === params.domain,
       )
-
-      if (conflictingApp) {
+      if (conflict) {
         result.errors.push(
-          `Target location '${params.location}.${targetDomain}' is already in use by app '${conflictingApp.manifest.title}'.`,
+          `${params.subdomain ? `${params.subdomain}.` : ""}${params.domain} is already used by ${conflict.manifest.title} (${conflict.id}).`,
         )
       }
 
-      // Recommendations
-      result.recommendations.push(
-        "Create a backup before cloning for disaster recovery.",
-      )
-    } catch (error) {
-      if (isCloudronError(error) && error.statusCode === 404) {
-        result.errors.push(`Source app with ID '${appId}' does not exist.`)
-      } else {
-        throw error
+      const backups = await this.dataProvider.listAppBackups(appId)
+      if (!backups.some(b => b.id === params.backupId)) {
+        result.errors.push(
+          `Backup '${params.backupId}' is not a backup of app '${appId}'.`,
+        )
       }
+    } catch (error) {
+      if (!isNotFound(error)) throw error
+      result.errors.push(`Source app with ID '${appId}' does not exist.`)
     }
-
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
-
-    return result
+    return finish(result)
   }
 
   /**
-   * Validate restore operation
-   * Checks: backup exists, storage sufficient
+   * Checks: app exists, backup belongs to the app, root disk has room
    */
   async validateRestoreOperation(
     appId: string,
     backupId: string,
   ): Promise<ValidationResult> {
-    const result: ValidationResult = {
-      valid: true,
-      errors: [],
-      warnings: [],
-      recommendations: [],
-    }
-
+    const result = emptyResult()
     try {
-      // Check if app exists
-      await this.dataProvider.getApp(appId)
+      const app = await this.dataProvider.getApp(appId)
 
-      // Check storage sufficiency
-      const storageInfo = await this.checkStorage(RESTORE_MIN_STORAGE_MB)
-      if (!storageInfo.sufficient) {
-        result.errors.push(
-          `Insufficient disk space for restore. Available: ${storageInfo.available_mb}MB, Required: ${RESTORE_MIN_STORAGE_MB}MB`,
-        )
-      }
-
-      if (storageInfo.critical) {
-        result.errors.push(
-          "CRITICAL: Less than 5% disk space remaining. Restore blocked.",
-        )
-      } else if (storageInfo.warning) {
-        result.warnings.push(
-          "WARNING: Less than 10% disk space remaining. Monitor during restore.",
-        )
-      }
-
-      // Check if backup exists
-      const backups = await this.dataProvider.listBackups()
+      const backups = await this.dataProvider.listAppBackups(appId)
       const backup = backups.find(b => b.id === backupId)
       if (!backup) {
-        result.errors.push(`Backup with ID '${backupId}' not found.`)
-      } else if (backup.state !== "uploaded" && backup.state !== "created") {
+        result.errors.push(
+          `Backup '${backupId}' is not a backup of ${app.fqdn}. Use cloudron_list_app_backups to find one.`,
+        )
+      } else if (backup.state !== "normal") {
+        result.errors.push(
+          `Backup '${backupId}' is in state '${backup.state}' and cannot be restored.`,
+        )
+      } else {
         result.warnings.push(
-          `Backup is in state '${backup.state}'. Restore may fail.`,
+          `Current data of ${app.fqdn} will be replaced with the backup from ${backup.creationTime}.`,
         )
       }
 
+      this.addStorageFindings(
+        await this.dataProvider.checkStorage(RESTORE_MIN_STORAGE_MB),
+        RESTORE_MIN_STORAGE_MB,
+        "restore",
+        result,
+      )
+
       result.recommendations.push(
-        "Create a backup of current state before restore for rollback capability.",
+        "Back up the current state first if you may want to roll back.",
       )
     } catch (error) {
-      if (isCloudronError(error) && error.statusCode === 404) {
-        result.errors.push(`App with ID '${appId}' does not exist.`)
-      } else {
-        throw error
-      }
+      if (!isNotFound(error)) throw error
+      result.errors.push(`App with ID '${appId}' does not exist.`)
     }
-
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
-
-    return result
+    return finish(result)
   }
 
   /**
-   * Validate update operation
-   * Checks: app exists, update available
+   * Checks: app exists and is installed
    */
   async validateUpdateOperation(appId: string): Promise<ValidationResult> {
-    const result: ValidationResult = {
-      valid: true,
-      errors: [],
-      warnings: [],
-      recommendations: [],
-    }
-
+    const result = emptyResult()
     try {
-      // Check if app exists
       const app = await this.dataProvider.getApp(appId)
-
-      // Check app state
       if (app.installationState !== "installed") {
         result.errors.push(
           `Cannot update app in state '${app.installationState}'. App must be 'installed'.`,
         )
       }
-
-      // Note: Checking if update is available would require additional API call
-      result.warnings.push(
-        "Update availability not verified. Operation may fail if no update exists.",
-      )
-
-      result.recommendations.push(
-        "Create a backup before updating for rollback capability.",
-      )
-    } catch (error) {
-      if (isCloudronError(error) && error.statusCode === 404) {
-        result.errors.push(`App with ID '${appId}' does not exist.`)
-      } else {
-        throw error
+      if (!app.updateInfo) {
+        result.warnings.push(
+          "Cloudron has not recorded a pending update for this app.",
+        )
       }
+    } catch (error) {
+      if (!isNotFound(error)) throw error
+      result.errors.push(`App with ID '${appId}' does not exist.`)
     }
-
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
-
-    return result
+    return finish(result)
   }
 
   /**
-   * Validate apply update operation
-   * Checks: update available, backup recommended
+   * Checks: an update is pending; warns when there is no full backup from the last day
    */
   async validateApplyUpdate(): Promise<ValidationResult> {
-    const result: ValidationResult = {
-      valid: true,
-      errors: [],
-      warnings: [],
-      recommendations: [],
+    const result = emptyResult()
+
+    const update = await this.dataProvider.checkUpdates()
+    if (!update) {
+      result.errors.push("No update available. Cloudron is already up to date.")
+      return finish(result)
     }
 
-    try {
-      // Check if update is available
-      const updateInfo = await this.dataProvider.checkUpdates()
-
-      if (!updateInfo.available) {
-        result.errors.push(
-          "No update available. Cloudron is already up to date.",
-        )
-      }
-
-      // Check for recent backup
-      const backups = await this.dataProvider.listBackups()
-      const now = new Date()
-      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-
-      const recentBackup = backups.find(
-        b => new Date(b.creationTime) > oneDayAgo && b.state === "uploaded",
+    const [latest] = await this.dataProvider.listBackups()
+    if (!isRecent(latest)) {
+      result.warnings.push(
+        "No full backup within the last 24 hours. Cloudron backs up before updating unless skipBackup is set.",
       )
+    }
 
-      if (!recentBackup) {
-        result.warnings.push(
-          "No backup found within the last 24 hours. Strongly recommend creating a backup before updating.",
-        )
-      }
-
-      // Recommendations
+    if (update.changelog?.length) {
       result.recommendations.push(
-        "Create a backup before applying update for rollback capability.",
+        `Review the changelog for v${update.version}:\n${update.changelog.map(line => `- ${line}`).join("\n")}`,
       )
-      result.recommendations.push(
-        "Schedule update during low-traffic period as services will restart.",
-      )
-
-      if (updateInfo.changelog) {
-        result.recommendations.push(
-          `Review changelog before updating: ${updateInfo.changelog}`,
-        )
-      }
-    } catch (error) {
-      if (error instanceof CloudronError) {
-        result.errors.push(`Update check failed: ${error.message}`)
-      } else {
-        throw error
-      }
     }
 
-    if (result.errors.length > 0) {
-      result.valid = false
-    }
+    return finish(result)
+  }
 
-    return result
+  private addStorageFindings(
+    storage: StorageInfo,
+    requiredMB: number,
+    operation: string,
+    result: { errors: string[]; warnings: string[] },
+  ): void {
+    if (storage.critical) {
+      result.errors.push(
+        `CRITICAL: less than 5% disk space left (${storage.available_mb}MB free). ${operation} blocked.`,
+      )
+    } else if (!storage.sufficient) {
+      result.errors.push(
+        `Insufficient disk space for ${operation}: ${storage.available_mb}MB free, ${requiredMB}MB required.`,
+      )
+    } else if (storage.warning) {
+      result.warnings.push(
+        `Less than 10% disk space left (${storage.available_mb}MB free).`,
+      )
+    }
   }
 }

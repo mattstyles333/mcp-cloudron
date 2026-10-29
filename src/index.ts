@@ -3,66 +3,26 @@
  * Full API client with MCP server integration
  */
 
-// New modular client
+export * from "./client/index.js"
 export {
-  AppStoreApi,
-  AppsApi,
-  BackupsApi,
-  type CloudronContext,
-  createCloudronContext,
-  GroupsApi,
-  HttpClient,
-  type HttpClientConfig,
-  LogsApi,
-  SystemApi,
-  TasksApi,
-  UpdatesApi,
-  UsersApi,
-} from "./client/index.js"
-// Errors
+  type AccessLevel,
+  getAccessLevel,
+} from "./config.js"
 export {
   CloudronAuthError,
   CloudronError,
   createErrorFromStatus,
   isCloudronError,
 } from "./errors.js"
-// Types
-export type {
-  App,
-  AppConfig,
-  AppManifest,
-  AppResponse,
-  AppStoreApp,
-  AppStoreResponse,
-  AppsResponse,
-  Backup,
-  BackupsResponse,
-  CloneAppParams,
-  CloudronClientConfig,
-  ConfigureAppResponse,
-  CreateGroupParams,
-  Domain,
-  Group,
-  GroupsResponse,
-  InstallAppParams,
-  LogEntry,
-  LogType,
-  ManifestValidationResult,
-  RestoreAppParams,
-  Service,
-  ServicesResponse,
-  StorageInfo,
-  SystemStatus,
-  TaskStatus,
-  UpdateAppParams,
-  UpdateInfo,
-  UpdateUserParams,
-  User,
-  UsersResponse,
-  ValidatableOperation,
-  ValidationResult,
-} from "./types.js"
-// Validation
+export {
+  isToolAllowed,
+  toolAccess,
+  toolsForAccessLevel,
+} from "./tools/access.js"
+export { callTool } from "./tools/call.js"
+export { TOOLS, type ToolDefinition } from "./tools/definitions.js"
+export type * from "./types.js"
+export { USER_ROLES } from "./types.js"
 export {
   isNonEmpty,
   isPositiveNumber,

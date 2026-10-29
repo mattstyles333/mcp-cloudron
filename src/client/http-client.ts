@@ -3,7 +3,11 @@
  * Core request functionality with error handling
  */
 
-import { DEFAULT_TIMEOUT_MS } from "../config.js"
+import {
+  DEFAULT_TIMEOUT_MS,
+  LIST_MAX_PAGES,
+  LIST_PAGE_SIZE,
+} from "../config.js"
 import { CloudronError, createErrorFromStatus } from "../errors.js"
 
 /**
@@ -13,6 +17,51 @@ export interface HttpClientConfig {
   baseUrl: string
   token: string
   timeout?: number
+}
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE"
+
+export type QueryParams = Record<string, string | number | boolean | undefined>
+
+export interface RequestOptions {
+  body?: unknown
+  query?: QueryParams
+  timeout?: number
+}
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
+
+/**
+ * Validate the instance URL. The token is sent on every request, so plain
+ * http is only accepted for a server on this machine.
+ */
+export function normalizeBaseUrl(baseUrl: string): string {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    throw new CloudronError(
+      `CLOUDRON_BASE_URL '${baseUrl}' is not a valid URL (expected e.g. https://my.example.com)`,
+    )
+  }
+
+  if (url.protocol !== "https:" && !LOCAL_HOSTS.has(url.hostname)) {
+    throw new CloudronError(
+      "CLOUDRON_BASE_URL must use https:// so the API token is not sent in clear text",
+    )
+  }
+
+  return url.origin
+}
+
+function buildQuery(query?: QueryParams): string {
+  if (!query) return ""
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value))
+  }
+  const text = params.toString()
+  return text ? `?${text}` : ""
 }
 
 /**
@@ -35,7 +84,7 @@ export class HttpClient {
       )
     }
 
-    this.baseUrl = config.baseUrl.replace(/\/$/, "") // Remove trailing slash
+    this.baseUrl = normalizeBaseUrl(config.baseUrl)
     this.token = config.token
     this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS
   }
@@ -62,71 +111,61 @@ export class HttpClient {
   }
 
   /**
-   * Make HTTP request to Cloudron API
-   * NO retry logic (deferred to Phase 3 with idempotency keys)
+   * Send a request and return the raw response body as text.
+   * No retries: most Cloudron writes start tasks and are not idempotent.
    */
-  async request<T>(
-    method: "GET" | "POST" | "PUT" | "DELETE",
+  private async send(
+    method: HttpMethod,
     endpoint: string,
-    body?: unknown,
-    options?: { timeout?: number; responseType?: "json" | "text" },
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`
-    const timeout = options?.timeout ?? this.timeout
+    options: RequestOptions & { accept?: string } = {},
+  ): Promise<string> {
+    const url = `${this.baseUrl}${endpoint}${buildQuery(options.query)}`
+    const timeout = options.timeout ?? this.timeout
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
 
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.token}`,
+      Accept: options.accept ?? "application/json",
+    }
+    const init: RequestInit = { method, headers, signal: controller.signal }
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json"
+      init.body = JSON.stringify(options.body)
+    }
+
     try {
-      const fetchOptions: RequestInit = {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        signal: controller.signal,
-      }
-
-      if (body !== undefined) {
-        fetchOptions.body = JSON.stringify(body)
-      }
-
-      const response = await fetch(url, fetchOptions)
-
-      clearTimeout(timeoutId)
+      const response = await fetch(url, init)
+      const text = await response.text()
 
       if (!response.ok) {
-        const errorBody = await response.text()
-        let message = `Cloudron API error: ${response.status} ${response.statusText}`
-
+        let message = `${response.status} ${response.statusText}`.trim()
         try {
-          const parsed = JSON.parse(errorBody)
-          if (parsed.message) message = parsed.message
+          const parsed = JSON.parse(text)
+          if (parsed && typeof parsed.message === "string") {
+            message = parsed.message
+          }
         } catch {
           // Use default message if body isn't JSON
         }
-
-        throw createErrorFromStatus(response.status, message)
+        throw createErrorFromStatus(
+          response.status,
+          `${message} (${method} ${endpoint})`,
+        )
       }
 
-      if (options?.responseType === "text") {
-        return (await response.text()) as unknown as T
-      }
-
-      return (await response.json()) as T
+      return text
     } catch (error) {
-      clearTimeout(timeoutId)
-
       if (error instanceof CloudronError) {
         throw error
       }
 
       if (error instanceof Error) {
         if (error.name === "AbortError") {
-          throw new CloudronError(`Request timeout after ${timeout}ms`, {
-            code: "TIMEOUT",
-            cause: error,
-          })
+          throw new CloudronError(
+            `Request timeout after ${timeout}ms (${method} ${endpoint})`,
+            { code: "TIMEOUT", cause: error },
+          )
         }
         throw new CloudronError(`Network error: ${error.message}`, {
           code: "NETWORK_ERROR",
@@ -135,48 +174,95 @@ export class HttpClient {
       }
 
       throw new CloudronError("Unknown error occurred", { cause: error })
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
   /**
-   * GET request helper
+   * Make a JSON request. Empty bodies (204 No Content, or 202 with no body)
+   * resolve to undefined rather than failing to parse.
    */
+  async request<T>(
+    method: HttpMethod,
+    endpoint: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const text = await this.send(method, endpoint, options)
+    if (text.trim() === "") {
+      return undefined as T
+    }
+    try {
+      return JSON.parse(text)
+    } catch (cause) {
+      throw new CloudronError(
+        `Cloudron returned a non-JSON response for ${method} ${endpoint}`,
+        { code: "BAD_RESPONSE", cause },
+      )
+    }
+  }
+
   async get<T>(
     endpoint: string,
-    options?: { timeout?: number; responseType?: "json" | "text" },
+    options: Omit<RequestOptions, "body"> = {},
   ): Promise<T> {
-    return this.request<T>("GET", endpoint, undefined, options)
+    return this.request<T>("GET", endpoint, options)
   }
 
   /**
-   * POST request helper
+   * GET a plain-text endpoint such as logs
    */
+  async getText(
+    endpoint: string,
+    options: Omit<RequestOptions, "body"> = {},
+  ): Promise<string> {
+    return this.send("GET", endpoint, { ...options, accept: "*/*" })
+  }
+
   async post<T>(
     endpoint: string,
     body?: unknown,
-    options?: { timeout?: number },
+    options: Omit<RequestOptions, "body"> = {},
   ): Promise<T> {
-    return this.request<T>("POST", endpoint, body, options)
+    return this.request<T>("POST", endpoint, { ...options, body: body ?? {} })
   }
 
-  /**
-   * PUT request helper
-   */
   async put<T>(
     endpoint: string,
     body?: unknown,
-    options?: { timeout?: number },
+    options: Omit<RequestOptions, "body"> = {},
   ): Promise<T> {
-    return this.request<T>("PUT", endpoint, body, options)
+    return this.request<T>("PUT", endpoint, { ...options, body: body ?? {} })
+  }
+
+  async delete<T>(
+    endpoint: string,
+    options: Omit<RequestOptions, "body"> = {},
+  ): Promise<T> {
+    return this.request<T>("DELETE", endpoint, options)
   }
 
   /**
-   * DELETE request helper
+   * Fetch every page of a paginated list endpoint (Cloudron defaults to 25
+   * rows per page and gives no total, so stop at the first short page).
    */
-  async delete<T>(
+  async getAllPages<T>(
     endpoint: string,
-    options?: { timeout?: number },
-  ): Promise<T> {
-    return this.request<T>("DELETE", endpoint, undefined, options)
+    key: string,
+    query: QueryParams = {},
+  ): Promise<T[]> {
+    const items: T[] = []
+    for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+      const response = await this.get<Record<string, T[] | undefined>>(
+        endpoint,
+        { query: { ...query, page, per_page: LIST_PAGE_SIZE } },
+      )
+      const pageItems = response?.[key] ?? []
+      items.push(...pageItems)
+      if (pageItems.length < LIST_PAGE_SIZE) return items
+    }
+    throw new CloudronError(
+      `${endpoint} returned more than ${LIST_PAGE_SIZE * LIST_MAX_PAGES} rows; narrow the query`,
+    )
   }
 }

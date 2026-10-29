@@ -9,7 +9,7 @@ import {
   type PackageValidationInput,
   validatePackage,
 } from "../../validation/package-validator.js"
-import type { ToolRegistry } from "../registry.js"
+import type { OfflineToolRegistry } from "../registry.js"
 import { errorResponse, textResponse } from "../response.js"
 
 /**
@@ -96,6 +96,6 @@ async function handleValidatePackage(args: unknown) {
 /**
  * Package validation tool handlers registry
  */
-export const packageValidationHandlers: ToolRegistry = {
+export const packageValidationHandlers: OfflineToolRegistry = {
   cloudron_validate_package: handleValidatePackage,
 }

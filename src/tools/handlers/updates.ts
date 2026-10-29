@@ -1,26 +1,27 @@
 /**
- * Update-related tool handlers
+ * Platform update tool handlers
  */
 
-import { formatAsyncTaskResponse, formatUpdateInfo } from "../formatters.js"
+import { formatAsyncTaskResponse, formatBoxUpdate } from "../formatters.js"
 import type { ToolRegistry } from "../registry.js"
 import { textResponse } from "../response.js"
+import { parseApplyUpdateArgs } from "../validators.js"
 
 export const updateHandlers: ToolRegistry = {
   cloudron_check_updates: async (_args, ctx) => {
-    const updateInfo = await ctx.updates.checkUpdates()
-
-    return textResponse(formatUpdateInfo(updateInfo))
+    const update = await ctx.updates.checkUpdates()
+    return textResponse(formatBoxUpdate(update))
   },
 
-  cloudron_apply_update: async (_args, ctx) => {
-    const taskId = await ctx.updates.applyUpdate()
+  cloudron_apply_update: async (args, ctx) => {
+    const { version } = parseApplyUpdateArgs(args)
+    const taskId = await ctx.updates.applyUpdate(version)
 
     return textResponse(
       formatAsyncTaskResponse(
-        "Cloudron platform update",
+        `Cloudron platform update to v${version}`,
         taskId,
-        "⚠️  Services will restart during the update process. This may take several minutes.",
+        "⚠️  Cloudron backs up, then restarts; apps are unavailable for several minutes.",
       ),
     )
   },

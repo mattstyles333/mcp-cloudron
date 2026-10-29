@@ -1,10 +1,12 @@
 /**
- * App Store-related tool handlers
+ * App Store tool handlers
  */
 
+import { APPSTORE_MAX_RESULTS } from "../../config.js"
+import { formatAppStoreApp } from "../formatters.js"
 import type { ToolRegistry } from "../registry.js"
 import { textResponse } from "../response.js"
-import { parseAppIdArgs, parseSearchAppsArgs } from "../validators.js"
+import { parseAppStoreIdArgs, parseSearchAppsArgs } from "../validators.js"
 
 export const appstoreHandlers: ToolRegistry = {
   cloudron_search_apps: async (args, ctx) => {
@@ -19,58 +21,35 @@ export const appstoreHandlers: ToolRegistry = {
       )
     }
 
-    const formatted = apps
-      .map((app, i) => {
-        const installCount =
-          app.installCount !== undefined ? app.installCount : "N/A"
-        const iconUrl = app.iconUrl || "N/A"
-        const score =
-          app.relevanceScore !== undefined
-            ? app.relevanceScore.toFixed(2)
-            : "N/A"
-
-        return `${i + 1}. ${app.name} (${app.id})
-  Version: ${app.version}
-  Description: ${app.description}
-  Install Count: ${installCount}
-  Icon URL: ${iconUrl}
-  Relevance Score: ${score}`
-      })
-      .join("\n\n")
-
-    const searchInfo = query
-      ? `Search results for "${query}"`
-      : "All available apps"
+    const shown = apps.slice(0, APPSTORE_MAX_RESULTS)
+    const more =
+      apps.length > shown.length
+        ? `\n\n…and ${apps.length - shown.length} more; refine the query to narrow it down.`
+        : ""
+    const heading = query ? `Results for "${query}"` : "App Store catalogue"
 
     return textResponse(
-      `${searchInfo}:\n\nFound ${apps.length} app(s):\n\n${formatted}`,
+      `${heading} (${apps.length} match(es)):\n\n${shown.map(formatAppStoreApp).join("\n\n")}${more}`,
     )
   },
 
   cloudron_validate_manifest: async (args, ctx) => {
-    const { appId } = parseAppIdArgs(args)
-    const result = await ctx.validation.validateManifest(appId)
+    const { appStoreId } = parseAppStoreIdArgs(args)
+    const result = await ctx.validation.validateManifest(appStoreId)
+
+    const warningsText =
+      result.warnings.length > 0
+        ? `\n\nWarnings:\n${result.warnings.map(w => `  - ${w}`).join("\n")}`
+        : ""
 
     if (result.valid) {
-      const warningText =
-        result.warnings.length > 0
-          ? `\n\nWarnings:\n${result.warnings.map(w => `  - ${w}`).join("\n")}`
-          : ""
-
-      return textResponse(`Manifest validation passed for app: ${appId}
-
-App is ready for installation.${warningText}`)
-    } else {
-      const errorsText = result.errors.map(e => `  - ${e}`).join("\n")
-      const warningsText =
-        result.warnings.length > 0
-          ? `\n\nWarnings:\n${result.warnings.map(w => `  - ${w}`).join("\n")}`
-          : ""
-
-      return textResponse(`Manifest validation failed for app: ${appId}
+      return textResponse(
+        `Pre-install check passed for ${appStoreId}.${warningsText}`,
+      )
+    }
+    return textResponse(`Pre-install check failed for ${appStoreId}:
 
 Errors (must be resolved):
-${errorsText}${warningsText}`)
-    }
+${result.errors.map(e => `  - ${e}`).join("\n")}${warningsText}`)
   },
 }

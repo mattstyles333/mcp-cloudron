@@ -9,7 +9,7 @@ import {
   getTopicContent,
   type PackagingTopic,
 } from "../../resources/packaging-guide.js"
-import type { ToolRegistry } from "../registry.js"
+import type { OfflineToolRegistry } from "../registry.js"
 import { errorResponse, textResponse } from "../response.js"
 
 /**
@@ -111,6 +111,6 @@ async function handlePackagingGuide(args: unknown) {
 /**
  * Packaging tool handlers registry
  */
-export const packagingHandlers: ToolRegistry = {
+export const packagingHandlers: OfflineToolRegistry = {
   cloudron_packaging_guide: handlePackagingGuide,
 }

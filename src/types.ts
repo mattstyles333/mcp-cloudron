@@ -1,17 +1,43 @@
 /**
  * Cloudron API TypeScript Definitions
- * Complete type definitions for apps, users, groups, backups, services, and system management
+ *
+ * Shapes follow the Cloudron box server source (routes/*.js) for 9.0 and 10.x.
+ * Field names are kept as Cloudron sends them so they line up with the API.
  */
 
+// ==================== Shared ====================
+
 /**
- * Configuration for CloudronClient - enables DI for testing
+ * Access restriction for an app: null means every Cloudron user can sign in
  */
-export interface CloudronClientConfig {
-  baseUrl: string
-  token: string
-  timeout?: number
-  retryAttempts?: number
+export interface AccessRestriction {
+  users?: string[] // User IDs allowed to access
+  groups?: string[] // Group IDs allowed to access
 }
+
+export type UserRole =
+  | "owner"
+  | "admin"
+  | "usermanager"
+  | "mailmanager"
+  | "user"
+
+export const USER_ROLES: readonly UserRole[] = [
+  "owner",
+  "admin",
+  "usermanager",
+  "mailmanager",
+  "user",
+]
+
+/**
+ * Response from endpoints that start an asynchronous task
+ */
+export interface TaskStarted {
+  taskId: string
+}
+
+// ==================== Apps ====================
 
 /**
  * App manifest subset containing metadata
@@ -20,175 +46,186 @@ export interface AppManifest {
   id: string
   version: string
   title: string
-  description: string
+  description?: string
   tagline?: string
   website?: string
   author?: string
+  tags?: string[]
   minBoxVersion?: string // Minimum Cloudron version required
-  memoryLimit?: number // Memory requirement in MB
+  memoryLimit?: number // Memory requirement in bytes
   addons?: Record<string, unknown> // Required addons (dependencies)
 }
 
 /**
- * Manifest validation result for F23a
+ * Pending app update as recorded by Cloudron's update checker
  */
+export interface AppUpdateInfo {
+  id?: string
+  manifest?: { version?: string }
+  unstable?: boolean
+}
+
+/**
+ * Installed app (GET /api/v1/apps and GET /api/v1/apps/:id)
+ */
+export interface App {
+  id: string
+  appStoreId: string
+  installationState: string // installed, pending_install, pending_configure, error, ...
+  runState: string // running, stopped
+  health: string | null // healthy, unhealthy, error, dead
+  error: { message?: string; reason?: string } | null
+  taskId: string | null
+  subdomain: string
+  domain: string
+  fqdn: string
+  label?: string | null
+  tags?: string[]
+  accessRestriction: AccessRestriction | null
+  manifest: AppManifest
+  portBindings: Record<string, unknown> | null
+  memoryLimit?: number // bytes, 0 = manifest default
+  env?: Record<string, string>
+  enableBackup?: boolean
+  enableAutomaticUpdate?: boolean
+  updateInfo?: AppUpdateInfo | null
+  creationTime?: string
+  updateTime?: string
+}
+
+export interface AppsResponse {
+  apps: App[]
+}
+
+/**
+ * POST /api/v1/apps body
+ */
+export interface InstallAppParams {
+  appStoreId: string // App Store id, optionally id@version
+  subdomain: string
+  domain: string
+  accessRestriction: AccessRestriction | null
+  ports?: Record<string, number>
+  env?: Record<string, string>
+  memoryLimit?: number // bytes
+  label?: string
+}
+
+/**
+ * POST /api/v1/apps/:id/clone body
+ */
+export interface CloneAppParams {
+  subdomain: string
+  domain: string
+  backupId: string
+  ports?: Record<string, number>
+}
+
+/**
+ * POST /api/v1/apps/:id/update body
+ */
+export interface UpdateAppParams {
+  appStoreId: string // id or id@version
+  force?: boolean
+  skipBackup?: boolean
+}
+
+/**
+ * Settings handled by cloudron_configure_app. Each maps to one
+ * POST /api/v1/apps/:id/configure/<setting> call.
+ */
+export interface AppConfig {
+  env?: Record<string, string | null> // merged into existing env; null removes a key
+  memoryLimit?: number // bytes
+  accessRestriction?: AccessRestriction | null
+  label?: string
+  tags?: string[]
+  enableAutomaticUpdate?: boolean
+  enableBackup?: boolean
+}
+
+export interface ConfigureResult {
+  setting: keyof AppConfig
+  taskId?: string
+}
+
+// ==================== App Store ====================
+
+/**
+ * App Store entry (GET /api/v1/appstore/apps)
+ */
+export interface AppStoreApp {
+  id: string
+  iconUrl?: string | null
+  releaseState?: string
+  manifest: AppManifest
+}
+
+export interface AppStoreResponse {
+  apps: AppStoreApp[]
+}
+
 export interface ManifestValidationResult {
   valid: boolean
   errors: string[]
   warnings: string[]
 }
 
-/**
- * App installation parameters for F23b
- */
-export interface InstallAppParams {
-  manifestId: string // App Store app ID to install
-  location: string // Subdomain for the app
-  domain: string // Domain where app will be installed (REQUIRED)
-  portBindings?: Record<string, number> // Optional port configuration
-  accessRestriction: string | null // Access control setting (can be null for no restriction)
-  env?: Record<string, string> // Optional environment variables
-}
+// ==================== System ====================
 
 /**
- * Cloudron App representation (normalized)
- * Note: API returns 'subdomain' but we normalize to 'location' for consistency
- */
-export interface App {
-  id: string
-  appStoreId: string
-  installationState:
-    | "pending_install"
-    | "installed"
-    | "pending_configure"
-    | "pending_uninstall"
-    | "pending_restore"
-    | "error"
-  installationProgress: string
-  runState: "running" | "stopped" | "dead"
-  health: "healthy" | "unhealthy" | "unknown"
-  location: string // Normalized from 'subdomain' in API response
-  domain: string
-  fqdn: string
-  accessRestriction: string | null
-  manifest: AppManifest
-  portBindings: Record<string, number> | null
-  iconUrl: string | null
-  memoryLimit: number
-  creationTime: string
-}
-
-/**
- * Raw App from Cloudron API (before normalization)
- * The API uses 'subdomain' instead of 'location'
- */
-export interface AppRaw {
-  id: string
-  appStoreId: string
-  installationState: string
-  installationProgress?: string
-  runState: string
-  health: string
-  subdomain: string // API field name
-  domain: string
-  fqdn: string
-  accessRestriction: string | null
-  manifest: AppManifest
-  ports?: Record<string, number> | null // API uses 'ports' not 'portBindings'
-  iconUrl: string | null
-  memoryLimit: number
-  creationTime?: string
-}
-
-/**
- * Raw API response wrapper for listing apps
- */
-export interface AppsResponseRaw {
-  apps: AppRaw[]
-}
-
-/**
- * API response wrapper for listing apps
- */
-export interface AppsResponse {
-  apps: App[]
-}
-
-/**
- * API response wrapper for single app
- */
-export interface AppResponse {
-  app: App
-}
-
-/**
- * System status response from /api/v1/cloudron/status
+ * GET /api/v1/cloudron/status
  */
 export interface SystemStatus {
   version: string
-  cloudronName?: string // Optional in spec/implementation
 }
 
 /**
- * Extended Cloudron status with full system information (for testing)
+ * GET /api/v1/system/info
  */
-export interface CloudronStatus extends SystemStatus {
-  boxVersionsUrl?: string
-  webServerOrigin?: string
-  fqdn?: string
-  isCustomDomain?: boolean
-  memory?: {
-    total: number
-    used: number
-    free: number
-    percent: number
-  }
-  update?: {
-    available: boolean
-    version?: string
-    changelog?: string
-  } | null
-  backup?: {
-    lastBackupTime: string
-    lastBackupId: string
-  }
+export interface SystemInfo {
+  sysVendor?: string
+  productName?: string
+  uptimeSecs?: number
+  rebootRequired?: boolean
+  activationTime?: string | null
 }
 
 /**
- * Disk usage response from /api/v1/system/disk_usage
+ * One entry of GET /api/v1/system/filesystems (sizes in bytes)
  */
-export interface DiskUsageResponse {
-  usage: {
-    filesystems: Record<
-      string,
-      {
-        available: number
-        size: number
-        used: number
-        mountpoint: string
-      }
-    >
-  }
+export interface Filesystem {
+  filesystem: string
+  type: string
+  size: number
+  used: number
+  available: number
+  capacity?: number
+  mountpoint: string
 }
 
-/**
- * Storage information for pre-flight disk space checks
- */
+export interface FilesystemsResponse {
+  filesystems: Record<string, Filesystem>
+}
+
 export interface StorageInfo {
+  mountpoint: string
   available_mb: number
   total_mb: number
   used_mb: number
-  sufficient: boolean
-  warning: boolean
-  critical: boolean
+  sufficient: boolean // available >= required
+  warning: boolean // < 10% free
+  critical: boolean // < 5% free
 }
 
-/**
- * Task status for async operations (normalized from API response)
- */
+// ==================== Tasks ====================
+
+export type TaskState = "pending" | "running" | "success" | "error" | "stopped"
+
 export interface TaskStatus {
   id: string
-  state: "pending" | "running" | "success" | "error" | "cancelled"
+  type?: string
+  state: TaskState
   progress: number // 0-100
   message: string
   result?: unknown
@@ -199,37 +236,33 @@ export interface TaskStatus {
 }
 
 /**
- * Raw task status from Cloudron API
- * The API returns boolean flags instead of a state string
+ * GET /api/v1/tasks/:id (tasks.removePrivateFields)
  */
 export interface TaskStatusRaw {
   id: string
   type?: string
-  percent?: number // 0-100
+  percent?: number
   message?: string
-  active?: boolean // If the task is currently running
-  pending?: boolean // If the task is scheduled to run
-  success?: boolean // If the task succeeded
+  running?: boolean // actively running
+  active?: boolean // running or scheduled; clients can stop polling once false
+  pending?: boolean
+  success?: boolean
   error?: {
     message: string
     code?: number | string
-  }
+  } | null
   result?: unknown
   creationTime?: string
   ts?: string
 }
 
-/**
- * Operation types for pre-flight validation
- */
+// ==================== Validation ====================
+
 export type ValidatableOperation =
   | "uninstall_app"
   | "delete_user"
-  | "restore_backup"
+  | "restore_app"
 
-/**
- * Validation result for destructive operations
- */
 export interface ValidationResult {
   valid: boolean
   errors: string[]
@@ -237,272 +270,181 @@ export interface ValidationResult {
   recommendations: string[]
 }
 
-/**
- * Domain configuration from Cloudron domain system
- */
+// ==================== Domains ====================
+
 export interface Domain {
   domain: string
   zoneName: string
   provider: string
-  config: Record<string, unknown>
-  tlsConfig: {
-    provider: string
-    wildcard: boolean
-  }
-  wellKnown: null | unknown
-  fallbackCertificate: {
-    cert: string
+  config?: Record<string, unknown>
+  tlsConfig?: {
+    provider?: string
+    wildcard?: boolean
   }
 }
 
+// ==================== Backups ====================
+
 /**
- * Backup metadata from Cloudron backup system
+ * Backup (GET /api/v1/backups and GET /api/v1/apps/:id/backups)
  */
 export interface Backup {
   id: string
+  remotePath?: string
+  label?: string | null
+  identifier: string // "box" for full backups, app id otherwise
   creationTime: string
-  version: string
-  type: "app" | "box"
-  state: "creating" | "created" | "uploading" | "uploaded" | "error"
-  size?: number // Size in bytes
-  appCount?: number // Number of apps in backup
-  dependsOn?: string[] // Backup dependencies
-  errorMessage?: string
+  packageVersion?: string
+  type: string // "box" or "app"
+  state: string // normal, creating, error
+  siteId?: string
+  preserveSecs?: number
+  dependsOn?: string[]
+  stats?: { size?: number; [key: string]: unknown } | null
 }
 
-/**
- * API response wrapper for listing backups
- */
 export interface BackupsResponse {
   backups: Backup[]
 }
 
 /**
- * App Store search result (normalized)
+ * Backup destination (GET /api/v1/backup_sites)
  */
-export interface AppStoreApp {
+export interface BackupSite {
   id: string
   name: string
-  description: string
-  version: string
-  iconUrl: string | null
-  installCount?: number | undefined
-  relevanceScore?: number | undefined
+  provider: string
+  format?: string
+  schedule?: string
+  enableForUpdates?: boolean
+  locationLabel?: string
+  encrypted?: boolean
 }
 
-/**
- * Raw App Store API response item (before normalization)
- * The API may return different field structures depending on version
- */
-export interface AppStoreAppRaw {
-  id?: string
-  name?: string
-  title?: string
-  description?: string
-  version?: string
-  iconUrl?: string
-  installCount?: number
-  relevanceScore?: number
-  manifest?: {
-    id?: string
-    title?: string
-    description?: string
-    version?: string
-    icon?: string
-  }
+export interface BackupSitesResponse {
+  backupSites: BackupSite[]
 }
 
-/**
- * API response wrapper for App Store search
- */
-export interface AppStoreResponse {
-  apps: AppStoreApp[]
-}
+// ==================== Users and Groups ====================
 
 /**
- * Cloudron User representation
+ * User (users.removePrivateFields)
  */
 export interface User {
   id: string
+  username: string | null
   email: string
-  username: string
+  fallbackEmail?: string
   displayName?: string
   role: UserRole
-  createdAt: string
+  active?: boolean
+  source?: string
+  groupIds?: string[]
+  createdAt?: string
+  inviteAccepted?: boolean
 }
 
-/**
- * API response wrapper for listing users
- */
 export interface UsersResponse {
   users: User[]
 }
 
-/**
- * API response for creating a user
- */
-export interface CreateUserResponse {
-  id: string
+export interface CreateUserParams {
+  email: string
+  username?: string
+  password?: string
+  displayName?: string
+  fallbackEmail?: string
+  role?: UserRole
 }
 
-/**
- * Log type enum for cloudron_get_logs
- */
-export type LogType = "app" | "service"
+export interface UpdateUserParams {
+  email?: string
+  displayName?: string
+  fallbackEmail?: string
+  role?: UserRole
+}
 
-/**
- * Log entry with parsed timestamp and severity
- */
+export interface Group {
+  id: string
+  name: string
+  source?: string
+  userIds?: string[]
+}
+
+export interface GroupsResponse {
+  groups: Group[]
+}
+
+export interface CreateGroupParams {
+  name: string
+}
+
+// ==================== Logs ====================
+
+export type LogType = "app" | "service" | "task"
+
 export interface LogEntry {
   timestamp: string
   severity: string
   message: string
 }
 
-/**
- * Access restriction configuration for apps
- */
-export interface AccessRestriction {
-  users?: string[] // Array of user IDs allowed to access
-  groups?: string[] // Array of group IDs allowed to access
-}
+// ==================== Services ====================
 
-/**
- * App configuration object for updating app settings
- */
-export interface AppConfig {
-  env?: Record<string, string> // Environment variables
-  memoryLimit?: number // Memory limit in bytes
-  accessRestriction?: AccessRestriction | null // Access control settings (null = no restriction)
-}
-
-/**
- * API response for app configuration
- */
-export interface ConfigureAppResponse {
-  app: App
-  restartRequired: boolean // Whether app needs restart for config to take effect
-}
-
-// ==================== New App Management Types ====================
-
-/**
- * Parameters for cloning an app
- */
-export interface CloneAppParams {
-  location: string // Required: subdomain for the clone
-  domain?: string // Optional: target domain (defaults to same)
-  portBindings?: Record<string, number> // Optional: port configuration
-  backupId?: string // Optional: clone from specific backup state
-}
-
-/**
- * Parameters for restoring an app from backup
- */
-export interface RestoreAppParams {
-  backupId: string // Required: backup to restore from
-}
-
-/**
- * Parameters for updating an app
- */
-export interface UpdateAppParams {
-  manifest?: {
-    version?: string // Optional: specific version to update to
-  }
-  force?: boolean // Optional: force update even if same version
-}
-
-// ==================== Services Types ====================
-
-/**
- * Platform service status
- */
 export interface Service {
-  /** Stable identifier used by /api/v1/services/:id/logs (e.g. "mysql", "redis:<uuid>") */
-  id: string
-  /** Display name (e.g. "MySQL") */
+  id: string // e.g. "mysql", "redis:<appId>"
   name: string
-  status: "running" | "stopped" | "error" | "unknown"
-  memory?: number // Memory usage in bytes
-  version?: string
-  error?: string
+  status: string // active, stopped, starting, idle, unknown, ...
+  memoryUsed?: number // bytes
+  memoryPercent?: number
+  error?: string | null
 }
 
-/**
- * API response wrapper for listing services.
- *
- * Cloudron returns objects, not bare strings:
- *   { services: [{ id: "mysql", name: "MySQL" }, ...] }
- */
 export interface ServicesResponse {
   services: Array<{ id: string; name: string }>
 }
 
-// ==================== User Management Types ====================
-
-/**
- * Valid user roles per Cloudron OpenAPI spec
- */
-export type UserRole =
-  | "owner"
-  | "admin"
-  | "usermanager"
-  | "mailmanager"
-  | "user"
-
-/**
- * Parameters for updating a user's profile
- * POST /api/v1/users/:userId/profile
- */
-export interface UpdateUserProfileParams {
-  email?: string // Optional: new email
-  displayName?: string // Optional: display name
-  fallbackEmail?: string // Optional: fallback email for password resets
+export interface ServiceStatusResponse {
+  service: {
+    name?: string
+    status: string | null
+    memoryUsed?: number
+    memoryPercent?: number
+    error?: string | null
+  }
 }
 
+// ==================== Platform updates ====================
+
 /**
- * Parameters for updating a user (convenience interface)
- * @deprecated Use UpdateUserProfileParams and updateUserRole() separately
+ * GET /api/v1/updater/box_update
  */
-export interface UpdateUserParams {
-  email?: string // Optional: new email
-  displayName?: string // Optional: display name
-  role?: UserRole // Optional: new role
+export interface BoxUpdateInfo {
+  version: string
+  changelog?: string[]
+  sourceTarballUrl?: string | null
+  unstable?: boolean
 }
 
-// ==================== Group Types ====================
+export interface BoxUpdateResponse {
+  update: BoxUpdateInfo | null
+}
 
-/**
- * Cloudron Group representation
- */
-export interface Group {
+// ==================== Event log and notifications ====================
+
+export interface EventLogEntry {
   id: string
-  name: string
-  createdAt: string
+  action: string
+  source?: Record<string, unknown> | null
+  data?: Record<string, unknown> | null
+  creationTime: string
 }
 
-/**
- * Parameters for creating a group
- */
-export interface CreateGroupParams {
-  name: string // Required: group name
-}
-
-/**
- * API response wrapper for listing groups
- */
-export interface GroupsResponse {
-  groups: Group[]
-}
-
-// ==================== Update Management Types ====================
-
-/**
- * Update information from Cloudron
- */
-export interface UpdateInfo {
-  available: boolean
-  version?: string // Available version if update exists
-  changelog?: string // Changelog for the update
+export interface Notification {
+  id: string
+  type?: string
+  title: string
+  message?: string
+  acknowledged: boolean
+  creationTime: string
 }

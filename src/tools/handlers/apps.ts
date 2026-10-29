@@ -2,28 +2,32 @@
  * App-related tool handlers
  */
 
-import { BACKUP_MIN_STORAGE_MB } from "../../config.js"
-import type { CloneAppParams } from "../../types.js"
 import {
   formatApp,
+  formatAppDetails,
   formatAsyncTaskResponse,
-  formatConfigChanges,
+  formatBackup,
+  formatBytes,
 } from "../formatters.js"
 import type { ToolRegistry } from "../registry.js"
 import { textResponse } from "../response.js"
 import {
   parseAppIdArgs,
+  parseBackupAppArgs,
   parseCloneAppArgs,
   parseConfigureAppArgs,
   parseControlAppArgs,
   parseInstallAppArgs,
   parseRestoreAppArgs,
+  parseUninstallAppArgs,
   parseUpdateAppArgs,
+  requireConfirmation,
 } from "../validators.js"
 
 export const appHandlers: ToolRegistry = {
   cloudron_list_apps: async (_args, ctx) => {
     const apps = await ctx.apps.listApps()
+    if (apps.length === 0) return textResponse("No apps installed.")
     const formatted = apps.map(formatApp).join("\n\n")
     return textResponse(`Found ${apps.length} apps:\n\n${formatted}`)
   },
@@ -31,177 +35,145 @@ export const appHandlers: ToolRegistry = {
   cloudron_get_app: async (args, ctx) => {
     const { appId } = parseAppIdArgs(args)
     const app = await ctx.apps.getApp(appId)
-    return textResponse(formatApp(app))
+    return textResponse(formatAppDetails(app))
   },
 
   cloudron_control_app: async (args, ctx) => {
     const { appId, action } = parseControlAppArgs(args)
-
-    let result: { taskId: string }
-    switch (action) {
-      case "start":
-        result = await ctx.apps.startApp(appId)
-        break
-      case "stop":
-        result = await ctx.apps.stopApp(appId)
-        break
-      case "restart":
-        result = await ctx.apps.restartApp(appId)
-        break
+    const operations = {
+      start: () => ctx.apps.startApp(appId),
+      stop: () => ctx.apps.stopApp(appId),
+      restart: () => ctx.apps.restartApp(appId),
     }
-
-    return textResponse(`App ${action} initiated successfully.
-  App ID: ${appId}
-  Task ID: ${result.taskId}
-
-Use cloudron_task_status with taskId '${result.taskId}' to track completion.`)
+    const { taskId } = await operations[action]()
+    return textResponse(formatAsyncTaskResponse(`App ${action}`, taskId))
   },
 
   cloudron_configure_app: async (args, ctx) => {
     const { appId, config } = parseConfigureAppArgs(args)
-    const result = await ctx.apps.configureApp(appId, config)
+    const results = await ctx.apps.configureApp(appId, config)
 
-    const configChanges = formatConfigChanges(config)
-    const restartNote = result.restartRequired
-      ? '\n⚠️  App restart required for configuration changes to take effect. Use cloudron_control_app with action "restart".'
-      : "\n✓ Configuration applied. No restart required."
+    const lines = results.map(({ setting, taskId }) => {
+      let detail = ""
+      if (setting === "env" && config.env) {
+        const removed = Object.values(config.env).filter(v => v === null).length
+        detail = ` (${Object.keys(config.env).length - removed} set, ${removed} removed)`
+      } else if (setting === "memoryLimit") {
+        detail = ` (${config.memoryLimit ? formatBytes(config.memoryLimit) : "app default"})`
+      }
+      return `  - ${setting}${detail}${taskId ? `: task ${taskId}` : ": applied"}`
+    })
+    const tasks = results.filter(r => r.taskId)
 
-    return textResponse(`App configuration updated successfully.
-App ID: ${appId}
-
-Configuration changes:
-${configChanges}
-${restartNote}`)
+    return textResponse(`App ${appId} configuration updated:
+${lines.join("\n")}${
+  tasks.length
+    ? "\n\nSettings with a task restart the app; track them with cloudron_task_status."
+    : ""
+}`)
   },
 
   cloudron_uninstall_app: async (args, ctx) => {
-    const { appId } = parseAppIdArgs(args)
-    const result = await ctx.apps.uninstallApp(appId)
+    const { appId, confirm } = parseUninstallAppArgs(args)
+    const app = await ctx.apps.getApp(appId)
+    requireConfirmation(confirm, app.fqdn, "the app's fqdn")
 
-    return textResponse(`Uninstall operation initiated for app: ${appId}
-  Task ID: ${result.taskId}
-  Status: Pending (202 Accepted)
-
-Use cloudron_task_status with taskId '${result.taskId}' to track uninstall progress.
-
-Note: This is a DESTRUCTIVE operation. The app and its data will be removed once the task completes.`)
-  },
-
-  cloudron_install_app: async (args, ctx) => {
-    const parsed = parseInstallAppArgs(args)
-
-    const taskId = await ctx.apps.installApp(parsed)
-
+    const { taskId } = await ctx.apps.uninstallApp(appId)
     return textResponse(
       formatAsyncTaskResponse(
-        `App installation for ${parsed.manifestId}`,
+        `Uninstall of ${app.fqdn}`,
         taskId,
-        `Location: ${parsed.location}.${parsed.domain}\n\nNote: Pre-flight validation passed. Installation is in progress.`,
+        "The app and its data will be removed when the task completes. Its backups are kept.",
       ),
     )
   },
 
-  // ==================== New App Management Handlers ====================
-
-  cloudron_clone_app: async (args, ctx) => {
-    const parsed = parseCloneAppArgs(args)
-
-    const cloneParams: CloneAppParams = {
-      location: parsed.location,
-    }
-    if (parsed.domain !== undefined) {
-      cloneParams.domain = parsed.domain
-    }
-    if (parsed.portBindings !== undefined) {
-      cloneParams.portBindings = parsed.portBindings
-    }
-    if (parsed.backupId !== undefined) {
-      cloneParams.backupId = parsed.backupId
-    }
-
-    const taskId = await ctx.apps.cloneApp(parsed.appId, cloneParams)
-
-    const targetLocation = parsed.domain
-      ? `${parsed.location}.${parsed.domain}`
-      : parsed.location
+  cloudron_install_app: async (args, ctx) => {
+    const { memoryLimit, ...params } = parseInstallAppArgs(args)
+    const { id, taskId } = await ctx.apps.installApp({
+      ...params,
+      ...(memoryLimit !== undefined && { memoryLimit }),
+    })
+    const location = params.subdomain
+      ? `${params.subdomain}.${params.domain}`
+      : params.domain
 
     return textResponse(
       formatAsyncTaskResponse(
-        `App clone from ${parsed.appId}`,
+        `Installation of ${params.appStoreId}`,
         taskId,
-        `Target location: ${targetLocation}\n\nNote: Pre-flight validation passed. Clone is in progress.`,
+        `App ID: ${id}\nLocation: ${location}`,
+      ),
+    )
+  },
+
+  cloudron_clone_app: async (args, ctx) => {
+    const { appId, ...options } = parseCloneAppArgs(args)
+    const { id, taskId, backupId } = await ctx.apps.cloneApp(appId, options)
+
+    return textResponse(
+      formatAsyncTaskResponse(
+        `Clone of ${appId}`,
+        taskId,
+        `New app ID: ${id}\nCloned from backup: ${backupId}`,
       ),
     )
   },
 
   cloudron_repair_app: async (args, ctx) => {
     const { appId } = parseAppIdArgs(args)
-
     const taskId = await ctx.apps.repairApp(appId)
-
-    return textResponse(
-      formatAsyncTaskResponse(
-        `App repair for ${appId}`,
-        taskId,
-        "Cloudron is attempting automatic repair of the application.",
-      ),
-    )
+    return textResponse(formatAsyncTaskResponse(`Repair of ${appId}`, taskId))
   },
 
   cloudron_restore_app: async (args, ctx) => {
-    const { appId, backupId } = parseRestoreAppArgs(args)
+    const { appId, backupId, confirm } = parseRestoreAppArgs(args)
+    const app = await ctx.apps.getApp(appId)
+    requireConfirmation(confirm, app.fqdn, "the app's fqdn")
 
-    const taskId = await ctx.apps.restoreApp(appId, { backupId })
-
+    const taskId = await ctx.apps.restoreApp(appId, backupId)
     return textResponse(
       formatAsyncTaskResponse(
-        `App restore for ${appId}`,
+        `Restore of ${app.fqdn}`,
         taskId,
-        `Restoring from backup: ${backupId}\n\n⚠️  DESTRUCTIVE OPERATION: Current app data will be replaced with backup data.`,
+        `Restoring from backup: ${backupId}. Current app data is being replaced.`,
       ),
     )
   },
 
   cloudron_update_app: async (args, ctx) => {
-    const parsed = parseUpdateAppArgs(args)
-
-    let updateParams: import("../../types.js").UpdateAppParams | undefined
-    if (parsed.version !== undefined || parsed.force !== undefined) {
-      updateParams = {}
-      if (parsed.version !== undefined) {
-        updateParams.manifest = { version: parsed.version }
-      }
-      if (parsed.force !== undefined) {
-        updateParams.force = parsed.force
-      }
-    }
-
-    const taskId = await ctx.apps.updateApp(parsed.appId, updateParams)
-
-    const versionInfo = parsed.version
-      ? `to version ${parsed.version}`
-      : "to latest version"
-
+    const { appId, ...options } = parseUpdateAppArgs(args)
+    const { taskId, target } = await ctx.apps.updateApp(appId, options)
     return textResponse(
       formatAsyncTaskResponse(
-        `App update for ${parsed.appId}`,
+        `Update of ${appId} to ${target}`,
         taskId,
-        `Updating ${versionInfo}\n\nNote: Pre-flight validation passed. Update is in progress.`,
+        "Cloudron backs the app up before updating.",
       ),
     )
   },
 
   cloudron_backup_app: async (args, ctx) => {
-    const { appId } = parseAppIdArgs(args)
-
-    const taskId = await ctx.apps.backupApp(appId)
-
+    const { appId, backupSiteId } = parseBackupAppArgs(args)
+    const { taskId, site } = await ctx.apps.backupApp(appId, backupSiteId)
     return textResponse(
       formatAsyncTaskResponse(
-        `App backup for ${appId}`,
+        `Backup of ${appId}`,
         taskId,
-        `Note: Pre-flight storage check passed (${BACKUP_MIN_STORAGE_MB}MB minimum required).`,
+        `Backup site: ${site.name} (${site.id})`,
       ),
+    )
+  },
+
+  cloudron_list_app_backups: async (args, ctx) => {
+    const { appId } = parseAppIdArgs(args)
+    const backups = await ctx.apps.listAppBackups(appId)
+    if (backups.length === 0) {
+      return textResponse(`App ${appId} has no backups.`)
+    }
+    const formatted = backups.map(formatBackup).join("\n\n")
+    return textResponse(
+      `Found ${backups.length} backup(s) of ${appId}, newest first:\n\n${formatted}`,
     )
   },
 }

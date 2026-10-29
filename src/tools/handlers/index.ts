@@ -1,8 +1,12 @@
 /**
- * Handler exports and combined registry
+ * Handler exports and combined registries
  */
 
-import { createRegistry, type ToolRegistry } from "../registry.js"
+import {
+  createRegistry,
+  type OfflineToolRegistry,
+  type ToolRegistry,
+} from "../registry.js"
 import { appHandlers } from "./apps.js"
 import { appstoreHandlers } from "./appstore.js"
 import { backupHandlers } from "./backups.js"
@@ -18,7 +22,6 @@ import { systemHandlers } from "./system.js"
 import { updateHandlers } from "./updates.js"
 import { userHandlers } from "./users.js"
 
-// Export individual handler registries
 export {
   appHandlers,
   appstoreHandlers,
@@ -36,20 +39,30 @@ export {
   userHandlers,
 }
 
-// Combined registry of all handlers
-export const allHandlers: ToolRegistry = createRegistry(
+/**
+ * Tools that call the Cloudron API (need CLOUDRON_BASE_URL and CLOUDRON_API_TOKEN)
+ */
+export const apiHandlers: ToolRegistry = createRegistry<ToolRegistry[string]>(
   appHandlers,
   appstoreHandlers,
   backupHandlers,
   domainHandlers,
-  gitFetchHandlers,
   groupHandlers,
   logHandlers,
-  packageValidationHandlers,
-  packagingHandlers,
-  scaffoldingHandlers,
   serviceHandlers,
   systemHandlers,
   updateHandlers,
   userHandlers,
+)
+
+/**
+ * Packaging helpers that work without Cloudron credentials
+ */
+export const offlineHandlers: OfflineToolRegistry = createRegistry<
+  OfflineToolRegistry[string]
+>(
+  gitFetchHandlers,
+  packageValidationHandlers,
+  packagingHandlers,
+  scaffoldingHandlers,
 )

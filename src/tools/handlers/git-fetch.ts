@@ -5,14 +5,14 @@
 
 import { CloudronGitClient } from "../../git/cloudron-git-client.js"
 import { PackageIndex } from "../../git/package-index.js"
-import type { ToolRegistry } from "../registry.js"
+import type { OfflineToolRegistry } from "../registry.js"
 import { textResponse } from "../response.js"
 import { parseAppIdArgs } from "../validators.js"
 
 const gitClient = new CloudronGitClient()
 
-export const gitFetchHandlers: ToolRegistry = {
-  cloudron_fetch_package_example: async (args, _ctx) => {
+export const gitFetchHandlers: OfflineToolRegistry = {
+  cloudron_fetch_package_example: async args => {
     const packageIndex = new PackageIndex()
     const { appId } = parseAppIdArgs(args)
 

@@ -4,11 +4,13 @@
  */
 
 import { CloudronError } from "../errors.js"
-import type {
-  UpdateUserParams,
-  User,
-  UsersResponse,
-  ValidationResult,
+import {
+  type CreateUserParams,
+  type UpdateUserParams,
+  USER_ROLES,
+  type User,
+  type UserRole,
+  type ValidationResult,
 } from "../types.js"
 import {
   isValidEmail,
@@ -27,6 +29,29 @@ export interface UserValidator {
   ): Promise<ValidationResult>
 }
 
+const ROLE_ORDER: Record<UserRole, number> = {
+  owner: 0,
+  admin: 1,
+  usermanager: 2,
+  mailmanager: 3,
+  user: 4,
+}
+
+function userPath(userId: string, suffix = ""): string {
+  if (!userId) {
+    throw new CloudronError("userId is required")
+  }
+  return `/api/v1/users/${encodeURIComponent(userId)}${suffix}`
+}
+
+function assertRole(role: string): asserts role is UserRole {
+  if (!isValidRole(role)) {
+    throw new CloudronError(
+      `Invalid role: ${role}. Valid options: ${USER_ROLES.join(", ")}`,
+    )
+  }
+}
+
 /**
  * Users API for Cloudron user management
  */
@@ -37,258 +62,110 @@ export class UsersApi {
   ) {}
 
   /**
-   * List all users on Cloudron instance
-   * GET /api/v1/users
-   * @returns Array of users sorted by role then email
+   * GET /api/v1/users (every page), sorted by role then email
    */
   async listUsers(): Promise<User[]> {
-    const response = await this.http.get<UsersResponse>("/api/v1/users")
-
-    // Sort users by role then email
-    const users = response.users || []
-    return users.sort((a, b) => {
-      // Sort by role first (admin > user > guest)
-      const roleOrder: Record<string, number> = { admin: 0, user: 1, guest: 2 }
-      const roleA = roleOrder[a.role] ?? 3
-      const roleB = roleOrder[b.role] ?? 3
-      const roleCompare = roleA - roleB
-      if (roleCompare !== 0) return roleCompare
-
-      // Then by email alphabetically
-      return a.email.localeCompare(b.email)
-    })
-  }
-
-  /**
-   * Get a specific user by ID
-   * GET /api/v1/users/:userId
-   * @param userId - The user ID to retrieve
-   * @returns User object
-   */
-  async getUser(userId: string): Promise<User> {
-    if (!userId) {
-      throw new CloudronError("userId is required")
-    }
-    return await this.http.get<User>(
-      `/api/v1/users/${encodeURIComponent(userId)}`,
+    const users = await this.http.getAllPages<User>("/api/v1/users", "users")
+    return users.sort(
+      (a, b) =>
+        (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) ||
+        a.email.localeCompare(b.email),
     )
   }
 
   /**
-   * Create a new user with role assignment (atomic operation)
-   * POST /api/v1/users
-   * @param email - User email address
-   * @param username - Username for login
-   * @param password - User password (must meet strength requirements)
-   * @param role - User role: 'owner', 'admin', 'usermanager', 'mailmanager', or 'user'
-   * @param displayName - Display name (defaults to username if not provided)
-   * @param fallbackEmail - Password recovery email (optional)
-   * @returns Created user object
+   * GET /api/v1/users/:userId
    */
-  async createUser(
-    email: string,
-    username: string,
-    password: string,
-    role: "owner" | "admin" | "usermanager" | "mailmanager" | "user",
-    displayName?: string,
-    fallbackEmail?: string,
-  ): Promise<User> {
-    // Validate email format
-    if (!email || !isValidEmail(email)) {
+  async getUser(userId: string): Promise<User> {
+    return await this.http.get<User>(userPath(userId))
+  }
+
+  /**
+   * POST /api/v1/users (returns only the new id), then read the user back.
+   * Without a password the user signs up through an invite.
+   */
+  async createUser(params: CreateUserParams): Promise<User> {
+    if (!isValidEmail(params.email)) {
       throw new CloudronError("Invalid email format")
     }
-
-    // Validate username
-    if (!username || username.trim().length === 0) {
-      throw new CloudronError("Username is required")
-    }
-
-    // Validate password strength (8+ chars, 1 uppercase, 1 number)
-    if (!isValidPassword(password)) {
+    if (params.password !== undefined && !isValidPassword(params.password)) {
       throw new CloudronError(
-        "Password must be at least 8 characters long and contain at least 1 uppercase letter and 1 number",
+        "Password must be between 8 and 256 characters long",
       )
     }
-
-    // Validate role enum
-    if (!isValidRole(role)) {
-      throw new CloudronError(
-        `Invalid role: ${role}. Valid options: owner, admin, usermanager, mailmanager, user`,
-      )
-    }
-
-    // Validate fallbackEmail if provided
-    if (fallbackEmail && !isValidEmail(fallbackEmail)) {
+    if (params.role !== undefined) assertRole(params.role)
+    if (
+      params.fallbackEmail !== undefined &&
+      !isValidEmail(params.fallbackEmail)
+    ) {
       throw new CloudronError("Invalid fallback email format")
     }
 
-    // Build request body
-    const requestBody: {
-      email: string
-      username: string
-      password: string
-      role: string
-      displayName?: string
-      fallbackEmail?: string
-    } = {
-      email,
-      username,
-      password,
-      role,
-    }
-
-    // Add optional fields if provided
-    if (displayName) {
-      requestBody.displayName = displayName
-    } else {
-      // Default displayName to username if not provided
-      requestBody.displayName = username
-    }
-
-    if (fallbackEmail) {
-      requestBody.fallbackEmail = fallbackEmail
-    }
-
-    return await this.http.post<User>("/api/v1/users", requestBody)
-  }
-
-  /**
-   * Update a user's profile (email, displayName)
-   * POST /api/v1/users/:userId/profile
-   * @param userId - The user ID to update
-   * @param params - Profile parameters (email, displayName)
-   */
-  async updateUserProfile(
-    userId: string,
-    params: { email?: string; displayName?: string },
-  ): Promise<void> {
-    if (!userId) {
-      throw new CloudronError("userId is required")
-    }
-
-    // Validate params object has at least one field
-    if (!params || Object.keys(params).length === 0) {
-      throw new CloudronError(
-        "params object cannot be empty. Provide at least one of: email, displayName",
-      )
-    }
-
-    // Validate email format if provided
-    if (params.email !== undefined && !isValidEmail(params.email)) {
-      throw new CloudronError("Invalid email format")
-    }
-
-    // POST /api/v1/users/:userId/profile returns 204 No Content
-    await this.http.post<void>(
-      `/api/v1/users/${encodeURIComponent(userId)}/profile`,
+    const response = await this.http.post<{ id: string }>(
+      "/api/v1/users",
       params,
     )
+    if (!response?.id) {
+      throw new CloudronError("User creation response missing id")
+    }
+    return await this.getUser(response.id)
   }
 
   /**
-   * Update a user's role
-   * PUT /api/v1/users/:userId/role
-   * @param userId - The user ID to update
-   * @param role - New role (owner, admin, usermanager, mailmanager, user)
+   * POST /api/v1/users/:userId/send_invite_email
    */
-  async updateUserRole(
-    userId: string,
-    role: "owner" | "admin" | "usermanager" | "mailmanager" | "user",
-  ): Promise<void> {
-    if (!userId) {
-      throw new CloudronError("userId is required")
-    }
-
-    const validRoles = ["owner", "admin", "usermanager", "mailmanager", "user"]
-    if (!validRoles.includes(role)) {
-      throw new CloudronError(
-        `Invalid role: ${role}. Valid options: ${validRoles.join(", ")}`,
-      )
-    }
-
-    // PUT /api/v1/users/:userId/role returns 204 No Content
-    await this.http.put<void>(
-      `/api/v1/users/${encodeURIComponent(userId)}/role`,
-      { role },
-    )
+  async sendInvite(userId: string, email: string): Promise<void> {
+    await this.http.post(userPath(userId, "/send_invite_email"), { email })
   }
 
   /**
-   * Update a user's properties (convenience method)
-   * @param userId - The user ID to update
-   * @param params - Update parameters (email, displayName, role)
-   * @returns Updated user object
+   * Update profile fields (POST /users/:id/profile, 204) and/or role
+   * (PUT /users/:id/role, 204), then read the user back.
    */
   async updateUser(userId: string, params: UpdateUserParams): Promise<User> {
-    if (!userId) {
-      throw new CloudronError("userId is required")
-    }
-
-    // Validate params object has at least one field
-    if (!params || Object.keys(params).length === 0) {
+    const { role, ...profile } = params
+    if (role === undefined && Object.keys(profile).length === 0) {
       throw new CloudronError(
-        "params object cannot be empty. Provide at least one of: email, displayName, role",
+        "Provide at least one of: email, displayName, fallbackEmail, role",
       )
     }
-
-    // Validate email format if provided
-    if (params.email !== undefined && !isValidEmail(params.email)) {
+    if (profile.email !== undefined && !isValidEmail(profile.email)) {
       throw new CloudronError("Invalid email format")
     }
-
-    // Validate role if provided - use the full role set from OpenAPI
-    const validRoles = ["owner", "admin", "usermanager", "mailmanager", "user"]
-    if (params.role !== undefined && !validRoles.includes(params.role)) {
-      throw new CloudronError(
-        `Invalid role: ${params.role}. Valid options: ${validRoles.join(", ")}`,
-      )
+    if (
+      profile.fallbackEmail !== undefined &&
+      !isValidEmail(profile.fallbackEmail)
+    ) {
+      throw new CloudronError("Invalid fallback email format")
     }
 
-    // Handle profile updates (email, displayName)
-    const profileParams: { email?: string; displayName?: string } = {}
-    if (params.email !== undefined) profileParams.email = params.email
-    if (params.displayName !== undefined)
-      profileParams.displayName = params.displayName
-
-    if (Object.keys(profileParams).length > 0) {
-      await this.updateUserProfile(userId, profileParams)
+    if (Object.keys(profile).length > 0) {
+      await this.http.post(userPath(userId, "/profile"), profile)
+    }
+    if (role !== undefined) {
+      assertRole(role)
+      await this.http.put(userPath(userId, "/role"), { role })
     }
 
-    // Handle role update separately
-    if (params.role !== undefined) {
-      await this.updateUserRole(userId, params.role)
-    }
-
-    // Return updated user
     return await this.getUser(userId)
   }
 
   /**
-   * Delete a user (DESTRUCTIVE OPERATION)
-   * DELETE /api/v1/users/:userId
-   * Performs pre-flight validation via validateDeleteUser before proceeding
-   * @param userId - The user ID to delete
+   * DELETE /api/v1/users/:userId (DESTRUCTIVE, 204)
    */
   async deleteUser(userId: string): Promise<void> {
-    if (!userId) {
-      throw new CloudronError("userId is required")
-    }
-
-    // Pre-flight validation if validator is provided
     if (this.validator) {
       const validation = await this.validator.validateOperation(
         "delete_user",
         userId,
       )
-
-      // If validation fails, throw error with validation details
       if (!validation.valid) {
-        const errorMessage = `Pre-flight validation failed for delete_user on '${userId}':\n${validation.errors.join("\n")}`
-        throw new CloudronError(errorMessage)
+        throw new CloudronError(
+          `Pre-flight validation failed for delete_user on '${userId}':\n${validation.errors.join("\n")}`,
+        )
       }
     }
 
-    // Proceed with delete if validation passes
-    await this.http.delete<void>(`/api/v1/users/${encodeURIComponent(userId)}`)
+    await this.http.delete(userPath(userId))
   }
 }

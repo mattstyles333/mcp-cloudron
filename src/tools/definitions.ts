@@ -1,124 +1,130 @@
 /**
  * MCP Tool Definitions for Cloudron
  *
- * This file contains the schema definitions for all available tools.
- * Each tool has a name, description, and input schema.
+ * Each tool carries MCP annotations. They tell clients which tools only read
+ * and which destroy data, and the server uses them to decide which tools a
+ * given CLOUDRON_ACCESS level exposes (see tools/access.ts).
  */
 
-export const TOOLS = [
+export interface ToolAnnotations {
+  title: string
+  readOnlyHint: boolean
+  destructiveHint: boolean
+  idempotentHint: boolean
+  openWorldHint: boolean
+}
+
+export interface ToolDefinition {
+  name: string
+  description: string
+  inputSchema: {
+    type: "object"
+    properties: Record<string, object>
+    required?: string[]
+  }
+  annotations: ToolAnnotations
+}
+
+const read = (title: string): ToolAnnotations => ({
+  title,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+})
+
+const write = (title: string, idempotent = false): ToolAnnotations => ({
+  title,
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: idempotent,
+  openWorldHint: true,
+})
+
+const destructive = (title: string): ToolAnnotations => ({
+  title,
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+})
+
+const offline = (title: string): ToolAnnotations => ({
+  title,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+})
+
+const noArgs = { type: "object" as const, properties: {} }
+
+const appId = {
+  type: "string",
+  description: "App ID (from cloudron_list_apps)",
+}
+
+const ports = {
+  type: "object",
+  description:
+    'Optional TCP/UDP port bindings, e.g. {"SSH_PORT": 2222}. Keys come from the app manifest.',
+  additionalProperties: { type: "number" },
+}
+
+const accessRestriction = {
+  type: ["object", "null"],
+  description:
+    'Who can sign in: null for every Cloudron user, or {"users": [userIds], "groups": [groupIds]}',
+  properties: {
+    users: { type: "array", items: { type: "string" } },
+    groups: { type: "array", items: { type: "string" } },
+  },
+}
+
+const backupSiteId = {
+  type: "string",
+  description:
+    "Backup site ID (from cloudron_list_backup_sites). Optional when only one site is configured.",
+}
+
+const confirm = (what: string) => ({
+  type: "string",
+  description: `Safety check: must equal ${what}, exactly as Cloudron reports it`,
+})
+
+const limit = {
+  type: "number",
+  description: "Maximum entries to return (default 25, max 100)",
+}
+
+const API_TOOLS: ToolDefinition[] = [
+  // ==================== Apps ====================
   {
     name: "cloudron_list_apps",
     description:
-      "List all installed applications on the Cloudron instance. Returns app details including name, domain, status, and health.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
+      "List installed apps with their location, state, health and whether an update is pending.",
+    inputSchema: noArgs,
+    annotations: read("List apps"),
   },
   {
     name: "cloudron_get_app",
     description:
-      "Get detailed information about a specific application by its ID.",
+      "Get details of one app: location, state, health, error, memory limit, access, backups and auto-update settings, environment variable names, pending update.",
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application",
-        },
-      },
+      type: "object",
+      properties: { appId },
       required: ["appId"],
     },
-  },
-  {
-    name: "cloudron_get_status",
-    description:
-      "Get the current status and configuration of the Cloudron instance.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_task_status",
-    description:
-      "Get the status of an async operation (backup, install, restore, etc.) by task ID. Returns state (pending/running/success/error/cancelled), progress (0-100%), and message.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        taskId: {
-          type: "string",
-          description: "The unique identifier of the task to check",
-        },
-      },
-      required: ["taskId"],
-    },
-  },
-  {
-    name: "cloudron_cancel_task",
-    description:
-      'Cancel a running async operation (kill switch). Returns updated task status with state "cancelled". Already completed tasks cannot be cancelled. Cancelled tasks cleanup resources (e.g., partial backups deleted).',
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        taskId: {
-          type: "string",
-          description: "The unique identifier of the task to cancel",
-        },
-      },
-      required: ["taskId"],
-    },
-  },
-  {
-    name: "cloudron_check_storage",
-    description:
-      "Check available disk space before operations that create data (backup, install). Returns available/total/used disk space in MB, plus warning and critical threshold alerts.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        requiredMB: {
-          type: "number",
-          description:
-            "Optional: Required disk space in MB. If provided, checks if available >= requiredMB",
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_validate_operation",
-    description:
-      "Pre-flight validation for destructive operations (uninstall app, delete user, restore backup). Returns validation result with blocking errors, warnings, and recommendations.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        operation: {
-          type: "string",
-          enum: ["uninstall_app", "delete_user", "restore_backup"],
-          description: "Type of destructive operation to validate",
-        },
-        resourceId: {
-          type: "string",
-          description:
-            "ID of the resource being operated on (appId, userId, or backupId)",
-        },
-      },
-      required: ["operation", "resourceId"],
-    },
+    annotations: read("Get app"),
   },
   {
     name: "cloudron_control_app",
     description:
-      "Control app lifecycle (start, stop, restart). Returns 202 Accepted with task ID for async operation tracking via cloudron_task_status.",
+      "Start, stop or restart an app. Returns a task ID; track it with cloudron_task_status.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to control",
-        },
+        appId,
         action: {
           type: "string",
           enum: ["start", "stop", "restart"],
@@ -127,458 +133,596 @@ export const TOOLS = [
       },
       required: ["appId", "action"],
     },
+    annotations: write("Start/stop/restart app", true),
   },
   {
     name: "cloudron_configure_app",
     description:
-      "Update application configuration including environment variables, memory limits, and access control settings. Returns 200 OK with updated app config and restart requirement flag.",
+      "Change app settings. env is merged into the existing variables (set a key to null to remove it). env and memoryLimit restart the app through a task that locks it, so change only one of them per call.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to configure",
-        },
+        appId,
         config: {
           type: "object",
-          description:
-            "Configuration object with env vars, memoryLimit, and/or accessRestriction",
+          description: "Settings to change; give at least one",
           properties: {
             env: {
               type: "object",
               description:
-                "Environment variables as key-value pairs (optional)",
-              additionalProperties: { type: "string" },
+                "Environment variables to set (string) or remove (null)",
+              additionalProperties: { type: ["string", "null"] },
             },
             memoryLimit: {
               type: "number",
-              description: "Memory limit in MB (optional)",
+              description:
+                "Memory limit in MB (converted to bytes for Cloudron); 0 uses the app's default",
             },
-            accessRestriction: {
-              type: ["string", "null"],
-              description: "Access control settings (optional)",
+            accessRestriction,
+            label: { type: "string", description: "Dashboard label" },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Dashboard tags (replaces existing tags)",
+            },
+            enableAutomaticUpdate: {
+              type: "boolean",
+              description: "Let Cloudron update the app automatically",
+            },
+            enableBackup: {
+              type: "boolean",
+              description: "Include the app in automatic backups",
             },
           },
         },
       },
       required: ["appId", "config"],
     },
-  },
-  {
-    name: "cloudron_list_backups",
-    description:
-      "List all backups available on the Cloudron instance. Returns backup details including ID, timestamp, size, app count, and status. Backups are sorted by timestamp (newest first).",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_create_backup",
-    description:
-      "Create a new backup of the Cloudron instance. Performs F36 pre-flight storage check (requires 5GB minimum). Returns task ID for tracking backup progress via cloudron_task_status (F34).",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_list_users",
-    description:
-      "List all users on the Cloudron instance. Returns user details including ID, email, username, role, and creation date. Users are sorted by role (admin, user, guest) then email.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_search_apps",
-    description:
-      "Search the Cloudron App Store for available applications. Returns app details including name, description, version, icon URL, and install count. Results are sorted by relevance score. Empty query returns all available apps.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "Search query to filter apps (optional - empty returns all apps)",
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "cloudron_validate_manifest",
-    description:
-      "Validate app manifest before installation (pre-flight safety check). Checks storage sufficiency via F36, dependency availability, and manifest schema validity. Returns validation report with errors and warnings.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The App Store ID to validate",
-        },
-      },
-      required: ["appId"],
-    },
-  },
-  {
-    name: "cloudron_create_user",
-    description:
-      "Create a new user on the Cloudron instance with role assignment (atomic operation). Password must be at least 8 characters long and contain at least 1 uppercase letter and 1 number. Returns 201 Created with user object.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        email: {
-          type: "string",
-          description: "User email address (must be valid format)",
-        },
-        username: {
-          type: "string",
-          description:
-            "Username for login (alphanumeric, lowercase recommended)",
-        },
-        password: {
-          type: "string",
-          description: "User password (8+ characters, 1 uppercase, 1 number)",
-        },
-        displayName: {
-          type: "string",
-          description:
-            "Display name for the user (defaults to username if not provided)",
-        },
-        role: {
-          type: "string",
-          enum: ["owner", "admin", "usermanager", "mailmanager", "user"],
-          description:
-            "User role: owner (platform owner), admin (full access), usermanager (manage users), mailmanager (manage mail), user (standard access)",
-        },
-        fallbackEmail: {
-          type: "string",
-          description: "Password recovery email (optional)",
-        },
-      },
-      required: ["email", "username", "password", "role"],
-    },
-  },
-  {
-    name: "cloudron_list_domains",
-    description:
-      "List all configured domains on the Cloudron instance. Returns domain details including name, provider, verification status, and TLS configuration.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-    },
-  },
-  {
-    name: "cloudron_get_logs",
-    description:
-      'Get logs for an app or service. Logs are formatted with timestamps and severity levels for readability. Type parameter determines endpoint: "app" calls GET /api/v1/apps/:id/logs, "service" calls GET /api/v1/services/:id/logs.',
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        resourceId: {
-          type: "string",
-          description: "App ID or service ID to retrieve logs for",
-        },
-        type: {
-          type: "string",
-          enum: ["app", "service"],
-          description:
-            'Type of resource: "app" for application logs, "service" for system service logs',
-        },
-        lines: {
-          type: "number",
-          description:
-            "Optional: Number of log lines to retrieve (default 100, max 1000)",
-        },
-      },
-      required: ["resourceId", "type"],
-    },
-  },
-  {
-    name: "cloudron_uninstall_app",
-    description:
-      "Uninstall an application with pre-flight safety validation. DESTRUCTIVE OPERATION. First validates via cloudron_validate_operation (checks app exists, no dependencies, backup recommended), then calls DELETE /api/v1/apps/:id. Returns 202 Accepted with task ID for async operation tracking.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to uninstall",
-        },
-      },
-      required: ["appId"],
-    },
+    annotations: write("Configure app", true),
   },
   {
     name: "cloudron_install_app",
     description:
-      "Install application from Cloudron App Store with pre-flight validation. Calls F23a (cloudron_validate_manifest) to verify app exists and F36 (cloudron_check_storage) to ensure sufficient disk space. Returns task ID for async operation tracking via cloudron_task_status.",
+      "Install an app from the Cloudron App Store. Checks the app exists and the root disk has room first. Returns the new app ID and a task ID.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        manifestId: {
+        appStoreId: {
           type: "string",
-          description: "App manifest ID from App Store",
+          description:
+            "App Store ID, e.g. org.wordpress.cloudronapp (from cloudron_search_apps); append @version to pin a version",
         },
-        location: {
+        subdomain: {
           type: "string",
-          description: "Subdomain for app installation",
+          description:
+            "Subdomain to install at; empty string for the bare domain",
         },
         domain: {
           type: "string",
-          description: "Domain where app will be installed (REQUIRED)",
+          description: "Domain to install on (from cloudron_list_domains)",
         },
-        portBindings: {
-          type: "object",
-          description: "Optional port bindings",
-        },
-        accessRestriction: {
-          type: ["string", "null"],
-          description:
-            "Access control setting (can be null for no restriction)",
-        },
+        accessRestriction,
+        ports,
         env: {
           type: "object",
-          description: "Environment variables",
+          description: "Optional environment variables",
+          additionalProperties: { type: "string" },
         },
+        memoryLimit: {
+          type: "number",
+          description: "Optional memory limit in MB",
+        },
+        label: { type: "string", description: "Optional dashboard label" },
       },
-      required: ["manifestId", "location", "domain", "accessRestriction"],
+      required: ["appStoreId", "subdomain", "domain"],
     },
+    annotations: write("Install app"),
   },
-  // ==================== New App Management Tools ====================
   {
     name: "cloudron_clone_app",
     description:
-      "Clone an existing application to a new location. Creates a duplicate of the app with its data and configuration. Performs pre-flight validation to check source app exists and target location is available. Returns task ID for async operation tracking via cloudron_task_status.",
+      "Clone an app from one of its backups to a new location. Uses the newest backup and the source app's domain unless given.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        appId: {
+        appId,
+        subdomain: {
           type: "string",
-          description: "The unique identifier of the application to clone",
-        },
-        location: {
-          type: "string",
-          description: "Subdomain for the cloned app (REQUIRED)",
+          description: "Subdomain for the clone",
         },
         domain: {
           type: "string",
-          description:
-            "Domain for the cloned app (optional, defaults to same domain as source)",
-        },
-        portBindings: {
-          type: "object",
-          description: "Optional port bindings for the clone",
+          description: "Domain for the clone (defaults to the source app's)",
         },
         backupId: {
           type: "string",
           description:
-            "Optional backup ID to clone from a specific backup state",
+            "Backup to clone from (from cloudron_list_app_backups); defaults to the newest",
         },
+        ports,
       },
-      required: ["appId", "location"],
+      required: ["appId", "subdomain"],
     },
+    annotations: write("Clone app"),
   },
   {
     name: "cloudron_repair_app",
     description:
-      "Repair a broken application. Attempts automatic repair of apps in error state. Use when an app is unhealthy or has installation issues. Returns task ID for async operation tracking via cloudron_task_status.",
+      "Re-run the last failed operation of an app that is in an error state. Returns a task ID.",
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to repair",
-        },
-      },
+      type: "object",
+      properties: { appId },
       required: ["appId"],
     },
-  },
-  {
-    name: "cloudron_restore_app",
-    description:
-      "Restore an application from a backup. DESTRUCTIVE OPERATION - current app data will be replaced. Performs pre-flight validation to check backup exists and storage is sufficient. Returns task ID for async operation tracking via cloudron_task_status.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to restore",
-        },
-        backupId: {
-          type: "string",
-          description: "The backup ID to restore from (REQUIRED)",
-        },
-      },
-      required: ["appId", "backupId"],
-    },
+    annotations: write("Repair app"),
   },
   {
     name: "cloudron_update_app",
     description:
-      "Update an application to a newer version. Performs pre-flight validation to check app exists and is in installed state. Returns task ID for async operation tracking via cloudron_task_status.",
+      "Update an App Store app to the latest or a given version. Cloudron backs the app up before updating. Returns a task ID.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to update",
-        },
+        appId,
         version: {
           type: "string",
-          description:
-            "Optional specific version to update to (defaults to latest)",
+          description: "Package version to update to (defaults to latest)",
         },
         force: {
           type: "boolean",
-          description: "Force update even if already on same version",
+          description:
+            "Update even if the new version has breaking-change warnings",
         },
       },
       required: ["appId"],
     },
+    annotations: write("Update app"),
   },
   {
     name: "cloudron_backup_app",
-    description:
-      "Create a backup of a specific application. Performs pre-flight storage check (requires 5GB minimum). Returns task ID for async operation tracking via cloudron_task_status.",
+    description: "Back up one app to a backup site. Returns a task ID.",
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        appId: {
-          type: "string",
-          description: "The unique identifier of the application to backup",
-        },
-      },
+      type: "object",
+      properties: { appId, backupSiteId },
       required: ["appId"],
     },
+    annotations: write("Back up app"),
   },
-  // ==================== Services Tools ====================
+  {
+    name: "cloudron_list_app_backups",
+    description:
+      "List the backups of one app, newest first. Use the IDs with cloudron_restore_app or cloudron_clone_app.",
+    inputSchema: {
+      type: "object",
+      properties: { appId },
+      required: ["appId"],
+    },
+    annotations: read("List app backups"),
+  },
+  {
+    name: "cloudron_restore_app",
+    description:
+      "DESTRUCTIVE: replace an app's current data with one of its backups. Validates that the backup belongs to the app first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appId,
+        backupId: {
+          type: "string",
+          description: "Backup to restore (from cloudron_list_app_backups)",
+        },
+        confirm: confirm("the app's fqdn (e.g. blog.example.com)"),
+      },
+      required: ["appId", "backupId", "confirm"],
+    },
+    annotations: destructive("Restore app from backup"),
+  },
+  {
+    name: "cloudron_uninstall_app",
+    description:
+      "DESTRUCTIVE: uninstall an app and delete its data. Warns if the app has no backup from the last 24 hours.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appId,
+        confirm: confirm("the app's fqdn (e.g. blog.example.com)"),
+      },
+      required: ["appId", "confirm"],
+    },
+    annotations: destructive("Uninstall app"),
+  },
+
+  // ==================== App Store ====================
+  {
+    name: "cloudron_search_apps",
+    description:
+      "Search the Cloudron App Store by name, ID, tag or tagline. Returns up to 25 matches.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search text (empty lists the catalogue alphabetically)",
+        },
+      },
+    },
+    annotations: read("Search App Store"),
+  },
+  {
+    name: "cloudron_validate_manifest",
+    description:
+      "Pre-install check for an App Store app: confirms it exists and the root disk has room.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appStoreId: {
+          type: "string",
+          description: "App Store ID to check",
+        },
+      },
+      required: ["appStoreId"],
+    },
+    annotations: read("Check App Store app"),
+  },
+
+  // ==================== System ====================
+  {
+    name: "cloudron_get_status",
+    description:
+      "Cloudron version, server vendor, uptime, whether a reboot is required, and any pending platform update.",
+    inputSchema: noArgs,
+    annotations: read("Get Cloudron status"),
+  },
+  {
+    name: "cloudron_check_storage",
+    description:
+      "Free, used and total space on the root disk in MB, with warning (<10% free) and critical (<5% free) flags.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requiredMB: {
+          type: "number",
+          description:
+            "Optional: report whether at least this many MB are free",
+        },
+      },
+    },
+    annotations: read("Check disk space"),
+  },
+  {
+    name: "cloudron_list_domains",
+    description: "List the domains configured on this Cloudron.",
+    inputSchema: noArgs,
+    annotations: read("List domains"),
+  },
   {
     name: "cloudron_list_services",
     description:
-      "List all platform services (read-only diagnostics). Returns status of Cloudron infrastructure services like databases (MySQL, PostgreSQL, MongoDB), mail, and other platform components. This is diagnostic information - services are managed automatically by Cloudron.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
+      "List platform services (MySQL, PostgreSQL, mail, ...) with their status and memory use.",
+    inputSchema: noArgs,
+    annotations: read("List services"),
   },
-  // ==================== User Management Tools ====================
+  {
+    name: "cloudron_restart_service",
+    description: "Restart one platform service, e.g. mysql or mail.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serviceId: {
+          type: "string",
+          description: "Service ID (from cloudron_list_services)",
+        },
+      },
+      required: ["serviceId"],
+    },
+    annotations: write("Restart service", true),
+  },
+  {
+    name: "cloudron_get_logs",
+    description: "Recent log lines for an app, a platform service or a task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "App ID, service ID or task ID",
+        },
+        type: {
+          type: "string",
+          enum: ["app", "service", "task"],
+          description: "What resourceId refers to",
+        },
+        lines: {
+          type: "number",
+          description: "Number of lines (default 100, max 1000)",
+        },
+      },
+      required: ["resourceId", "type"],
+    },
+    annotations: read("Get logs"),
+  },
+  {
+    name: "cloudron_list_eventlog",
+    description:
+      "Audit log of what happened on the Cloudron (logins, installs, updates, backups...), newest first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appId: {
+          type: "string",
+          description: "Optional: only events for this app",
+        },
+        actions: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Optional action filter, e.g. ["app.update", "backup.finish", "user.login"]',
+        },
+        search: { type: "string", description: "Optional text search" },
+        from: {
+          type: "string",
+          description: "Optional ISO 8601 start time",
+        },
+        to: { type: "string", description: "Optional ISO 8601 end time" },
+        limit,
+      },
+    },
+    annotations: read("List event log"),
+  },
+  {
+    name: "cloudron_list_notifications",
+    description:
+      "Dashboard notifications (failed backups, app errors, update notices), newest first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        acknowledged: {
+          type: "boolean",
+          description:
+            "Optional: false for open notifications only, true for acknowledged only",
+        },
+        limit,
+      },
+    },
+    annotations: read("List notifications"),
+  },
+  {
+    name: "cloudron_acknowledge_notification",
+    description: "Mark a dashboard notification as acknowledged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        notificationId: {
+          type: "string",
+          description: "Notification ID (from cloudron_list_notifications)",
+        },
+      },
+      required: ["notificationId"],
+    },
+    annotations: write("Acknowledge notification", true),
+  },
+
+  // ==================== Tasks ====================
+  {
+    name: "cloudron_task_status",
+    description:
+      "State (pending/running/success/error/stopped), progress and message of an async task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task ID" },
+      },
+      required: ["taskId"],
+    },
+    annotations: read("Get task status"),
+  },
+  {
+    name: "cloudron_cancel_task",
+    description:
+      "Stop a running task (e.g. a backup) and return its final state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task ID" },
+      },
+      required: ["taskId"],
+    },
+    annotations: write("Stop task", true),
+  },
+  {
+    name: "cloudron_validate_operation",
+    description:
+      "Dry-run the pre-flight checks for a destructive operation without performing it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: {
+          type: "string",
+          enum: ["uninstall_app", "delete_user", "restore_app"],
+          description: "Operation to check",
+        },
+        resourceId: {
+          type: "string",
+          description:
+            "appId for uninstall_app/restore_app, userId for delete_user",
+        },
+        backupId: {
+          type: "string",
+          description: "Backup ID (required for restore_app)",
+        },
+      },
+      required: ["operation", "resourceId"],
+    },
+    annotations: read("Check destructive operation"),
+  },
+
+  // ==================== Backups ====================
+  {
+    name: "cloudron_list_backups",
+    description:
+      "List full-instance backups, newest first. Per-app backups are listed by cloudron_list_app_backups.",
+    inputSchema: noArgs,
+    annotations: read("List backups"),
+  },
+  {
+    name: "cloudron_list_backup_sites",
+    description:
+      "List backup destinations (storage provider, schedule, encryption).",
+    inputSchema: noArgs,
+    annotations: read("List backup sites"),
+  },
+  {
+    name: "cloudron_create_backup",
+    description:
+      "Start a full-instance backup to a backup site. Returns a task ID.",
+    inputSchema: {
+      type: "object",
+      properties: { backupSiteId },
+    },
+    annotations: write("Create full backup"),
+  },
+
+  // ==================== Users and groups ====================
+  {
+    name: "cloudron_list_users",
+    description: "List all users with their role and status.",
+    inputSchema: noArgs,
+    annotations: read("List users"),
+  },
   {
     name: "cloudron_get_user",
-    description:
-      "Get detailed information about a specific user by their ID. Returns user details including email, username, role, and creation date.",
+    description: "Get one user's details.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        userId: {
-          type: "string",
-          description: "The unique identifier of the user",
-        },
+        userId: { type: "string", description: "User ID" },
       },
       required: ["userId"],
     },
+    annotations: read("Get user"),
+  },
+  {
+    name: "cloudron_create_user",
+    description:
+      "Create a user. Without a password, set sendInvite so they can sign up by email. API tokens act as admin, so they cannot create owners.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Email address" },
+        username: {
+          type: "string",
+          description: "Optional username (otherwise chosen at sign-up)",
+        },
+        password: {
+          type: "string",
+          description: "Optional password, 8 to 256 characters",
+        },
+        displayName: { type: "string", description: "Optional display name" },
+        fallbackEmail: {
+          type: "string",
+          description: "Optional password-recovery email",
+        },
+        role: {
+          type: "string",
+          enum: ["admin", "usermanager", "mailmanager", "user"],
+          description: "Role (default user)",
+        },
+        sendInvite: {
+          type: "boolean",
+          description: "Email the user an invite link",
+        },
+      },
+      required: ["email"],
+    },
+    annotations: write("Create user"),
   },
   {
     name: "cloudron_update_user",
     description:
-      "Update a user's properties including email, display name, role, or password. At least one property must be provided. Role changes have security implications - promoting to admin grants full access, demoting from admin may lock out if last admin.",
+      "Change a user's email, display name, fallback email or role. Passwords can only be changed by the user (or via a reset email in the dashboard).",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        userId: {
+        userId: { type: "string", description: "User ID" },
+        email: { type: "string", description: "New email" },
+        displayName: { type: "string", description: "New display name" },
+        fallbackEmail: {
           type: "string",
-          description: "The unique identifier of the user to update",
-        },
-        email: {
-          type: "string",
-          description: "New email address for the user (optional)",
-        },
-        displayName: {
-          type: "string",
-          description: "New display name for the user (optional)",
+          description: "New password-recovery email",
         },
         role: {
           type: "string",
-          enum: ["admin", "user", "guest"],
-          description: "New role for the user (optional)",
-        },
-        password: {
-          type: "string",
-          description:
-            "New password for the user (optional, must meet strength requirements: 8+ chars, 1 uppercase, 1 number)",
+          enum: ["owner", "admin", "usermanager", "mailmanager", "user"],
+          description: "New role",
         },
       },
       required: ["userId"],
     },
+    annotations: write("Update user", true),
   },
   {
     name: "cloudron_delete_user",
     description:
-      "Delete a user from the Cloudron instance. DESTRUCTIVE OPERATION. Performs pre-flight validation to check user exists and is not the last admin. Returns 204 No Content on success.",
+      "DESTRUCTIVE: delete a user. Refuses to delete the last owner.",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        userId: {
-          type: "string",
-          description: "The unique identifier of the user to delete",
-        },
+        userId: { type: "string", description: "User ID" },
+        confirm: confirm("the user's email address"),
       },
-      required: ["userId"],
+      required: ["userId", "confirm"],
     },
+    annotations: destructive("Delete user"),
   },
-  // ==================== Group Management Tools ====================
   {
     name: "cloudron_list_groups",
-    description:
-      "List all groups on the Cloudron instance. Returns group details including ID, name, and creation date. Groups are sorted alphabetically by name.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
+    description: "List user groups and their members.",
+    inputSchema: noArgs,
+    annotations: read("List groups"),
   },
   {
     name: "cloudron_create_group",
-    description:
-      "Create a new group on the Cloudron instance. Groups can be used for access control and user organization.",
+    description: "Create a user group (for app access control).",
     inputSchema: {
-      type: "object" as const,
+      type: "object",
       properties: {
-        name: {
-          type: "string",
-          description: "The name of the group to create (required)",
-        },
+        name: { type: "string", description: "Group name" },
       },
       required: ["name"],
     },
+    annotations: write("Create group"),
   },
-  // ==================== Update Management Tools ====================
+
+  // ==================== Platform updates ====================
   {
     name: "cloudron_check_updates",
     description:
-      "Check if Cloudron platform updates are available. Returns update information including availability, version, and changelog if an update exists.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
+      "Show the pending Cloudron platform update found by Cloudron's own checker, with its changelog.",
+    inputSchema: noArgs,
+    annotations: read("Check platform update"),
   },
   {
     name: "cloudron_apply_update",
     description:
-      "Apply available Cloudron platform update. DESTRUCTIVE OPERATION - services will restart during update. Performs pre-flight validation to check update is available and recommends backup. Returns task ID for async operation tracking via cloudron_task_status.",
+      "DESTRUCTIVE: update the Cloudron platform. All apps go offline while it restarts. Cloudron backs up first.",
     inputSchema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
+      type: "object",
+      properties: {
+        version: {
+          type: "string",
+          description:
+            "Safety check: the version reported by cloudron_check_updates, e.g. 10.1.7",
+        },
+      },
+      required: ["version"],
     },
+    annotations: destructive("Apply platform update"),
   },
+]
+
+// Packaging helpers work offline (except fetching examples from git.cloudron.io)
+// and are available at every access level.
+const PACKAGING_TOOLS: Omit<ToolDefinition, "annotations">[] = [
   // ==================== Packaging Guide Tool ====================
   {
     name: "cloudron_packaging_guide",
@@ -733,4 +877,25 @@ export const TOOLS = [
       required: ["appId"],
     },
   },
+]
+
+const PACKAGING_TITLES: Record<string, string> = {
+  cloudron_packaging_guide: "Packaging guide",
+  cloudron_scaffold_package: "Scaffold package",
+  cloudron_validate_package: "Validate package",
+  cloudron_fetch_package_example: "Fetch package example",
+}
+
+export const TOOLS: ToolDefinition[] = [
+  ...API_TOOLS,
+  ...PACKAGING_TOOLS.map(tool => {
+    const title = PACKAGING_TITLES[tool.name] ?? tool.name
+    return {
+      ...tool,
+      annotations:
+        tool.name === "cloudron_fetch_package_example"
+          ? read(title)
+          : offline(title),
+    }
+  }),
 ]

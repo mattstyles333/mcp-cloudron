@@ -54,10 +54,9 @@ describe("cloudron_fetch_package_example", () => {
       text: async () => "start script content",
     })
 
-    const result = await gitFetchHandlers.cloudron_fetch_package_example(
-      { appId: "com.electerious.ackee" },
-      {} as any,
-    )
+    const result = await gitFetchHandlers.cloudron_fetch_package_example({
+      appId: "com.electerious.ackee",
+    })
 
     expect(result.content[0].text).toContain("Found repository: Ackee App")
     expect(result.content[0].text).toContain("--- CloudronManifest.json ---")
@@ -71,10 +70,9 @@ describe("cloudron_fetch_package_example", () => {
       json: async () => [],
     })
 
-    const result = await gitFetchHandlers.cloudron_fetch_package_example(
-      { appId: "com.unknown.app" },
-      {} as any,
-    )
+    const result = await gitFetchHandlers.cloudron_fetch_package_example({
+      appId: "com.unknown.app",
+    })
 
     expect(result.content[0].text).toContain(
       "Could not find a repository for App ID: com.unknown.app",
@@ -122,10 +120,9 @@ describe("cloudron_fetch_package_example", () => {
       text: async () => "start script content",
     })
 
-    const result = await gitFetchHandlers.cloudron_fetch_package_example(
-      { appId: "com.electerious.ackee" },
-      {} as any,
-    )
+    const result = await gitFetchHandlers.cloudron_fetch_package_example({
+      appId: "com.electerious.ackee",
+    })
 
     expect(result.content[0].text).toContain("Found repository: Ackee App")
     expect(result.content[0].text).toContain("(File not found or error")

@@ -2,14 +2,13 @@
  * Tool Handler Registry
  *
  * Maps tool names to their handler functions.
- * This pattern replaces the giant switch statement in server.ts.
  */
 
 import type { CloudronContext } from "../client/index.js"
 import type { MCPToolResponse } from "./response.js"
 
 /**
- * Tool handler function signature
+ * Handler for a tool that talks to the Cloudron API
  */
 export type ToolHandler = (
   args: unknown,
@@ -17,13 +16,19 @@ export type ToolHandler = (
 ) => Promise<MCPToolResponse>
 
 /**
- * Registry of tool handlers
+ * Handler for a tool that needs no Cloudron credentials (packaging helpers)
  */
+export type OfflineToolHandler = (args: unknown) => Promise<MCPToolResponse>
+
 export type ToolRegistry = Record<string, ToolHandler>
+
+export type OfflineToolRegistry = Record<string, OfflineToolHandler>
 
 /**
  * Create a combined registry from multiple handler modules
  */
-export function createRegistry(...registries: ToolRegistry[]): ToolRegistry {
+export function createRegistry<T>(
+  ...registries: Record<string, T>[]
+): Record<string, T> {
   return Object.assign({}, ...registries)
 }

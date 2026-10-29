@@ -4,6 +4,7 @@
  * Provides tools for managing Cloudron instances via MCP protocol
  */
 
+import { createRequire } from "node:module"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
@@ -14,100 +15,53 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 
 import { type CloudronContext, createCloudronContext } from "./client/index.js"
-import { isCloudronError } from "./errors.js"
+import { getAccessLevel } from "./config.js"
 import {
   getFullPackagingGuide,
   PACKAGING_GUIDE_URI,
   RESOURCES,
 } from "./resources/index.js"
-import { TOOLS } from "./tools/definitions.js"
-import { allHandlers } from "./tools/handlers/index.js"
-import { errorResponse } from "./tools/response.js"
+import { toolsForAccessLevel } from "./tools/access.js"
+import { callTool, validateToolHandlerAlignment } from "./tools/call.js"
 
-/**
- * Validate that all defined tools have corresponding handlers
- * Catches tool↔handler mismatches at startup rather than runtime
- */
-function validateToolHandlerAlignment(): void {
-  const missingHandlers: string[] = []
-
-  for (const tool of TOOLS) {
-    if (!allHandlers[tool.name]) {
-      missingHandlers.push(tool.name)
-    }
-  }
-
-  if (missingHandlers.length > 0) {
-    throw new Error(
-      `Tool↔Handler mismatch: The following tools are defined but have no handler: ${missingHandlers.join(", ")}`,
-    )
-  }
+const { version } = createRequire(import.meta.url)("../package.json") as {
+  version: string
 }
 
-// Validate tool↔handler alignment at module load time
+// Catch tool↔handler mismatches at startup rather than on first call
 validateToolHandlerAlignment()
 
-// Create server instance
+const accessLevel = getAccessLevel()
+
 const server = new Server(
-  {
-    name: "cloudron-mcp",
-    version: "0.1.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
-  },
+  { name: "cloudron-mcp", version },
+  { capabilities: { tools: {}, resources: {} } },
 )
 
-// Lazy-initialize context (validates env vars on first use)
+// Lazy-initialize context (validates env vars on first API tool call)
 let ctx: CloudronContext | null = null
-
 function getContext(): CloudronContext {
-  if (!ctx) {
-    ctx = createCloudronContext()
-  }
+  ctx ??= createCloudronContext()
   return ctx
 }
 
-// Handle list tools request
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS,
+  tools: toolsForAccessLevel(accessLevel),
 }))
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async request => {
-  const { name, arguments: args } = request.params
+server.setRequestHandler(CallToolRequestSchema, async request =>
+  callTool(
+    request.params.name,
+    request.params.arguments,
+    accessLevel,
+    getContext,
+  ),
+)
 
-  try {
-    const context = getContext()
-
-    // Look up handler in registry
-    const handler = allHandlers[name]
-    if (!handler) {
-      return errorResponse(`Unknown tool: ${name}`)
-    }
-
-    // Execute handler
-    return await handler(args, context)
-  } catch (error) {
-    const message = isCloudronError(error)
-      ? `Cloudron API Error: ${error.message} (${error.statusCode ?? "unknown"})`
-      : error instanceof Error
-        ? error.message
-        : "Unknown error occurred"
-
-    return errorResponse(message)
-  }
-})
-
-// Handle list resources request
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({
   resources: RESOURCES,
 }))
 
-// Handle read resource request
 server.setRequestHandler(ReadResourceRequestSchema, async request => {
   const { uri } = request.params
 
@@ -126,11 +80,11 @@ server.setRequestHandler(ReadResourceRequestSchema, async request => {
   throw new Error(`Unknown resource: ${uri}`)
 })
 
-// Main entry point
 async function main(): Promise<void> {
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
-  console.error("Cloudron MCP server running on stdio")
+  await server.connect(new StdioServerTransport())
+  console.error(
+    `Cloudron MCP server v${version} running on stdio (CLOUDRON_ACCESS=${accessLevel}, ${toolsForAccessLevel(accessLevel).length} tools)`,
+  )
 }
 
 main().catch(error => {

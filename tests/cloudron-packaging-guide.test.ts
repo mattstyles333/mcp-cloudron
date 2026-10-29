@@ -16,7 +16,7 @@ const handler = packagingHandlers.cloudron_packaging_guide!
 describe("cloudron_packaging_guide", () => {
   describe("valid topics", () => {
     it("should return overview content", async () => {
-      const result = await handler({ topic: "overview" }, {} as never)
+      const result = await handler({ topic: "overview" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -25,7 +25,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should return manifest content", async () => {
-      const result = await handler({ topic: "manifest" }, {} as never)
+      const result = await handler({ topic: "manifest" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -34,7 +34,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should return dockerfile content", async () => {
-      const result = await handler({ topic: "dockerfile" }, {} as never)
+      const result = await handler({ topic: "dockerfile" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -43,7 +43,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should return addons content", async () => {
-      const result = await handler({ topic: "addons" }, {} as never)
+      const result = await handler({ topic: "addons" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -53,7 +53,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should return testing content", async () => {
-      const result = await handler({ topic: "testing" }, {} as never)
+      const result = await handler({ topic: "testing" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -63,7 +63,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should return publishing content", async () => {
-      const result = await handler({ topic: "publishing" }, {} as never)
+      const result = await handler({ topic: "publishing" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -74,10 +74,7 @@ describe("cloudron_packaging_guide", () => {
 
   describe("appType parameter", () => {
     it("should include nodejs-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "nodejs" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "nodejs" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -86,10 +83,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should include php-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "php" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "php" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -98,10 +92,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should include java-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "java" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "java" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -110,10 +101,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should include python-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "python" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "python" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -121,10 +109,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should include go-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "go" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "go" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -132,10 +117,7 @@ describe("cloudron_packaging_guide", () => {
     })
 
     it("should include static-specific guidance", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "static" },
-        {} as never,
-      )
+      const result = await handler({ topic: "dockerfile", appType: "static" })
 
       assertSuccess(result)
       const text = assertHasTextContent(result)
@@ -146,28 +128,28 @@ describe("cloudron_packaging_guide", () => {
 
   describe("error handling", () => {
     it("should return error for invalid topic", async () => {
-      const result = await handler({ topic: "invalid-topic" }, {} as never)
+      const result = await handler({ topic: "invalid-topic" })
 
       assertError(result, "Invalid topic")
     })
 
     it("should return error for invalid appType", async () => {
-      const result = await handler(
-        { topic: "dockerfile", appType: "invalid-type" },
-        {} as never,
-      )
+      const result = await handler({
+        topic: "dockerfile",
+        appType: "invalid-type",
+      })
 
       assertError(result, "Invalid appType")
     })
 
     it("should return error when topic is missing", async () => {
-      const result = await handler({}, {} as never)
+      const result = await handler({})
 
       assertError(result, "topic is required")
     })
 
     it("should return error when args is null", async () => {
-      const result = await handler(null, {} as never)
+      const result = await handler(null)
 
       assertError(result, "Invalid input")
     })

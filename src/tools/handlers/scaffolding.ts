@@ -9,7 +9,7 @@ import {
   ScaffoldValidationError,
   validateScaffoldInput,
 } from "../../scaffolding/index.js"
-import type { ToolRegistry } from "../registry.js"
+import type { OfflineToolRegistry } from "../registry.js"
 import { errorResponse, textResponse } from "../response.js"
 
 /**
@@ -95,6 +95,6 @@ function formatScaffoldOutput(
 /**
  * Scaffolding tool handlers registry
  */
-export const scaffoldingHandlers: ToolRegistry = {
+export const scaffoldingHandlers: OfflineToolRegistry = {
   cloudron_scaffold_package: handleScaffoldPackage,
 }

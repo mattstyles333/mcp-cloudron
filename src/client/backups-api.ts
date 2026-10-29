@@ -1,11 +1,17 @@
 /**
  * Backups API
- * Backup listing and creation operations
+ * Full-instance backups and backup sites (Cloudron 9+)
  */
 
-import { BACKUP_MIN_STORAGE_MB } from "../config.js"
 import { CloudronError } from "../errors.js"
-import type { Backup, BackupsResponse, StorageInfo } from "../types.js"
+import type {
+  Backup,
+  BackupSite,
+  BackupSitesResponse,
+  StorageInfo,
+  TaskStarted,
+} from "../types.js"
+import { resolveBackupSite } from "./apps-api.js"
 import type { HttpClient } from "./http-client.js"
 
 /**
@@ -25,55 +31,45 @@ export class BackupsApi {
   ) {}
 
   /**
-   * List all backups
-   * GET /api/v1/backups
-   * @returns Array of backups sorted by timestamp (newest first)
+   * GET /api/v1/backups: completed full-instance backups, newest first.
+   * App backups are listed per app (AppsApi.listAppBackups).
    */
   async listBackups(): Promise<Backup[]> {
-    const response = await this.http.get<BackupsResponse>("/api/v1/backups")
-
-    // Sort backups by creationTime (newest first)
-    const backups = response.backups || []
-    return backups.sort((a, b) => {
-      const timeA = new Date(a.creationTime).getTime()
-      const timeB = new Date(b.creationTime).getTime()
-      return timeB - timeA // Descending order (newest first)
-    })
+    return await this.http.getAllPages<Backup>("/api/v1/backups", "backups")
   }
 
   /**
-   * Create a new backup (with F36 pre-flight storage check)
-   * POST /api/v1/backups/create
-   * @returns Task ID for tracking backup progress via getTaskStatus()
+   * GET /api/v1/backup_sites
    */
-  async createBackup(): Promise<string> {
-    // F36 pre-flight storage check: Require minimum storage for backup
-    const storageInfo = await this.storageChecker.checkStorage(
-      BACKUP_MIN_STORAGE_MB,
+  async listBackupSites(): Promise<BackupSite[]> {
+    const response = await this.http.get<BackupSitesResponse>(
+      "/api/v1/backup_sites",
     )
+    return response.backupSites
+  }
 
-    if (!storageInfo.sufficient) {
+  /**
+   * POST /api/v1/backup_sites/:id/create_backup
+   * Blocked only when the root disk is critically full.
+   */
+  async createBackup(
+    backupSiteId?: string,
+  ): Promise<{ taskId: string; site: BackupSite }> {
+    const storageInfo = await this.storageChecker.checkStorage()
+    if (storageInfo.critical) {
       throw new CloudronError(
-        `Insufficient storage for backup. Required: ${BACKUP_MIN_STORAGE_MB}MB, Available: ${storageInfo.available_mb}MB`,
+        `Root disk is critically full (${storageInfo.available_mb}MB free). Free space before backing up.`,
       )
     }
 
-    if (storageInfo.warning) {
-      // Log warning but allow operation to proceed
-      console.warn(
-        `Storage warning: ${storageInfo.available_mb}MB available (${((storageInfo.available_mb / storageInfo.total_mb) * 100).toFixed(1)}% of total)`,
-      )
-    }
+    const site = resolveBackupSite(await this.listBackupSites(), backupSiteId)
 
-    // Create backup (async operation) - per OpenAPI spec: POST /backups/create
-    const response = await this.http.post<{ taskId: string }>(
-      "/api/v1/backups/create",
+    const response = await this.http.post<TaskStarted>(
+      `/api/v1/backup_sites/${encodeURIComponent(site.id)}/create_backup`,
     )
-
-    if (!response.taskId) {
+    if (!response?.taskId) {
       throw new CloudronError("Backup creation response missing taskId")
     }
-
-    return response.taskId
+    return { taskId: response.taskId, site }
   }
 }

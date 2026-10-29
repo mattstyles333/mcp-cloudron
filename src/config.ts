@@ -50,3 +50,42 @@ export const MAX_LOG_LINES = 1000
  * Default log lines to retrieve
  */
 export const DEFAULT_LOG_LINES = 100
+
+/**
+ * Page size used when walking paginated list endpoints
+ * Cloudron defaults to 25 per page, which silently truncates lists
+ */
+export const LIST_PAGE_SIZE = 100
+
+/**
+ * Upper bound on pages fetched by a single list call (100 x 50 = 5000 rows)
+ */
+export const LIST_MAX_PAGES = 50
+
+/**
+ * Maximum App Store search results returned to the model
+ */
+export const APPSTORE_MAX_RESULTS = 25
+
+/**
+ * What the server lets a client do, set via CLOUDRON_ACCESS
+ * - read: read-only tools (default). Pair with a read-only API token.
+ * - write: adds tools that change state but can be undone (start/stop, backup, configure, install...)
+ * - all: adds destructive tools (uninstall, delete user, restore, platform update)
+ */
+export type AccessLevel = "read" | "write" | "all"
+
+export const ACCESS_LEVELS: readonly AccessLevel[] = ["read", "write", "all"]
+
+export function getAccessLevel(
+  value: string | undefined = process.env.CLOUDRON_ACCESS,
+): AccessLevel {
+  if (value === undefined || value === "") return "read"
+  const level = ACCESS_LEVELS.find(l => l === value)
+  if (!level) {
+    throw new Error(
+      `Invalid CLOUDRON_ACCESS '${value}'. Valid options: ${ACCESS_LEVELS.join(", ")}`,
+    )
+  }
+  return level
+}

@@ -2,28 +2,24 @@
  * Global test setup for Vitest
  *
  * This file is loaded via Vitest's setupFiles configuration.
- * It provides common setup/teardown for all tests.
  */
 
 import { afterAll, afterEach, beforeAll, vi } from "vitest"
-import { cleanupTestEnv, setupTestEnv } from "./cloudron-mock"
+import { BASE_URL, TOKEN } from "./cloudron-fake"
 
-// Store original fetch for restoration
 let originalFetch: typeof global.fetch
-
-// Add fail() helper for tests (similar to Jest's fail)
-;(globalThis as Record<string, unknown>).fail = (message?: string): never => {
-  throw new Error(message ?? "Test failed")
-}
+const originalEnv = { ...process.env }
 
 beforeAll(() => {
-  setupTestEnv()
   originalFetch = global.fetch
+  process.env.CLOUDRON_BASE_URL = BASE_URL
+  process.env.CLOUDRON_API_TOKEN = TOKEN
+  delete process.env.CLOUDRON_ACCESS
 })
 
 afterAll(() => {
-  cleanupTestEnv()
   global.fetch = originalFetch
+  process.env = originalEnv
 })
 
 afterEach(() => {
