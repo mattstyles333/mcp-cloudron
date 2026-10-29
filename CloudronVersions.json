@@ -1,0 +1,47 @@
+{
+  "stable": true,
+  "versions": {
+    "0.7.0": {
+      "manifest": {
+        "manifestVersion": 2,
+        "id": "io.github.mattstyles333.cloudronmcp",
+        "title": "Cloudron MCP",
+        "tagline": "Let AI assistants manage your Cloudron over MCP",
+        "description": "Cloudron MCP gives AI assistants (Claude, opencode, Cursor and other [MCP](https://modelcontextprotocol.io) clients) controlled access to this Cloudron.\n\n### What clients can do\n\n* **Read:** apps, health, logs, backups, users and groups, services, the event log, notifications, disk space, pending updates, the App Store.\n* **Read & write:** start, stop, restart, configure, install, clone, repair and update apps; take backups; create and edit users and groups; restart services.\n* **Everything:** also uninstall and restore apps, delete users and update the platform. Each of these needs a typed confirmation (the app's address, the user's email or the exact version).\n\n### Who decides\n\n* A settings page, behind your Cloudron login and limited to owners and admins, holds the Cloudron API token and the maximum access level.\n* Each client gets its own key with its own level, which can be lowered or revoked at any time.\n* A read-only API token keeps every client read-only, whatever the settings say.\n* Recent tool calls are listed with the key that made them.\n\nNot affiliated with Cloudron. Based on the open source [halecraft/mcp-cloudron](https://github.com/halecraft/mcp-cloudron).",
+        "changelog": "* Initial Cloudron package\n* Settings page behind the Cloudron login: API token, maximum access level, per-client keys, recent activity\n* MCP over HTTP at /mcp with per-client bearer keys\n* 42 tools for apps, backups, users, groups, services, logs, the event log and platform updates",
+        "postInstallMessage": "Open the app to finish setup:\n\n1. In your dashboard, go to **Settings → API Tokens** and create a token. A read-only token keeps every client read-only.\n2. Paste the token into the app's settings page.\n3. Create a key for each MCP client and connect it to `https://$CLOUDRON-APP-FQDN/mcp` with the header `Authorization: Bearer <key>`.\n\nUntil a token is saved, anyone allowed into this app can set it up. Restrict the app to admins in its **Access Control** settings if other users can reach it.",
+        "version": "0.7.0",
+        "upstreamVersion": "0.7.0",
+        "minBoxVersion": "10.0.0",
+        "httpPort": 3000,
+        "healthCheckPath": "/healthz",
+        "memoryLimit": 268435456,
+        "addons": {
+          "localstorage": {},
+          "proxyAuth": {
+            "supportsBearerAuth": true
+          }
+        },
+        "website": "https://github.com/mattstyles333/mcp-cloudron",
+        "packageUrl": "https://github.com/mattstyles333/mcp-cloudron",
+        "documentationUrl": "https://github.com/mattstyles333/mcp-cloudron#readme",
+        "packagerName": "mattstyles333",
+        "packagerUrl": "https://github.com/mattstyles333",
+        "iconUrl": "https://raw.githubusercontent.com/mattstyles333/mcp-cloudron/main/logo.png",
+        "mediaLinks": [
+          "https://raw.githubusercontent.com/mattstyles333/mcp-cloudron/main/docs/screenshot.png"
+        ],
+        "tags": [
+          "developer",
+          "automation",
+          "ai",
+          "mcp"
+        ],
+        "dockerImage": "ghcr.io/mattstyles333/mcp-cloudron:0.7.0"
+      },
+      "creationDate": "Thu, 29 Oct 2026 15:06:57 GMT",
+      "ts": "Thu, 29 Oct 2026 15:06:57 GMT",
+      "publishState": "published"
+    }
+  }
+}
