@@ -168,8 +168,11 @@ export function createApp(options: AppOptions) {
     const secret = bearerToken(req)
     const key = secret ? store.findKey(secret) : undefined
     if (!key) {
+      // 403, not 401: Cloudron's nginx intercepts 401 from proxyAuth apps
+      // and turns it into a redirect to the login page, which MCP clients
+      // cannot use
       res.setHeader("WWW-Authenticate", 'Bearer realm="cloudron-mcp"')
-      sendJson(res, 401, {
+      sendJson(res, 403, {
         jsonrpc: "2.0",
         error: {
           code: -32001,
@@ -239,7 +242,7 @@ export function createApp(options: AppOptions) {
    */
   async function viewer(req: IncomingMessage) {
     if (bearerToken(req)) {
-      throw new HttpError(401, "Client keys cannot use the settings API")
+      throw new HttpError(403, "Client keys cannot use the settings API")
     }
     const username = header(req, "x-remote-user")
     if (!username) {

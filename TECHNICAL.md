@@ -32,6 +32,8 @@ The manifest uses the `proxyAuth` addon with `supportsBearerAuth`. nginx then:
 - sends requests carrying `Authorization: Bearer` straight to the app, where `/mcp` requires a client key from the store;
 - puts every other request behind the Cloudron login and sets `X-Remote-User`. That header is blanked on bearer requests, so it cannot be forged; the settings API also refuses any request with a bearer.
 
+Cloudron's nginx sets `proxy_intercept_errors on` and maps a 401 from a proxyAuth app to a redirect to the login page. The app therefore answers a missing or unknown client key with **403** (JSON-RPC error body plus `WWW-Authenticate`), never 401. 502 and 504 are replaced by Cloudron's error page too.
+
 Settings changes need `X-Requested-With: cloudron-mcp` (a custom header, which cannot be sent cross-site without a CORS preflight that the app never grants). The signed-in user's role comes from `GET /users?search=` with the stored token, cached for 60 seconds. If that lookup fails with 401/403 (token rejected), setup reopens; any other failure answers 503 rather than granting access.
 
 The token's write ability is probed with `POST /groups {}`. Cloudron checks token scope before validating the body, so a read-only token gets 403, a read-write one gets 400, and nothing is created.

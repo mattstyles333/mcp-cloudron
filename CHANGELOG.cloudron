@@ -1,3 +1,6 @@
+[0.7.1]
+* Answer a missing or unknown client key with 403 instead of 401, which Cloudron turned into a login redirect
+
 [0.7.0]
 * Initial Cloudron package
 * Settings page behind the Cloudron login: API token, maximum access level, per-client keys, recent activity

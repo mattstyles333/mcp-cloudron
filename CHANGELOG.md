@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- The app answers a missing or unknown client key with 403. Cloudron's nginx replaces a 401 from a proxyAuth app with a redirect to the login page, which MCP clients cannot use. Found on the first live install.
+
 ## 0.7.0
 
 - **Cloudron app**: install as a community app (Cloudron 10+). Serves MCP over Streamable HTTP at `/mcp` and a settings page behind the Cloudron login with:

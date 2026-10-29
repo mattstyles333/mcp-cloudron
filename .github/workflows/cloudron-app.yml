@@ -63,7 +63,7 @@ jobs:
             "$IMAGE:${{ steps.version.outputs.version }}"
           for i in $(seq 1 30); do curl -fs localhost:3000/healthz && break; sleep 1; done
           curl -fs localhost:3000/healthz
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3000/mcp)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3000/mcp)" = 403
           curl -fs localhost:3000/ | grep -q "Cloudron MCP"
           curl -fs -H "X-Remote-User: ci" localhost:3000/api/state | jq -e '.viewer.bootstrap == true'
           curl -fs -X POST -H "X-Remote-User: ci" -H "X-Requested-With: cloudron-mcp" \

@@ -1,6 +1,6 @@
 {
   "name": "@halecraft/mcp-cloudron",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "MCP server for Cloudron 9/10 instance management with read/write/destructive access levels",
   "type": "module",
   "main": "dist/index.js",

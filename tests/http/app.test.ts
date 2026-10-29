@@ -122,8 +122,9 @@ describe("health and UI", () => {
 describe("MCP endpoint", () => {
   it("rejects requests without a valid client key", async () => {
     await start({ token: okStatus })
+    // 403 rather than 401: Cloudron's nginx turns a 401 into a login redirect
     const none = await fetch(`${origin}/mcp`, { method: "POST", body: "{}" })
-    expect(none.status).toBe(401)
+    expect(none.status).toBe(403)
     expect(none.headers.get("www-authenticate")).toContain("Bearer")
 
     const wrong = await fetch(`${origin}/mcp`, {
@@ -131,7 +132,7 @@ describe("MCP endpoint", () => {
       headers: { Authorization: "Bearer mcpc_notarealkey" },
       body: "{}",
     })
-    expect(wrong.status).toBe(401)
+    expect(wrong.status).toBe(403)
   })
 
   it("serves MCP to a valid key and logs the call without secrets", async () => {
@@ -238,7 +239,7 @@ describe("settings API access", () => {
     const res = await fetch(`${origin}/api/state`, {
       headers: asUser("matt", { Authorization: `Bearer ${secret}` }),
     })
-    expect(res.status).toBe(401)
+    expect(res.status).toBe(403)
   })
 
   it("lets anyone with app access set up the first token", async () => {
