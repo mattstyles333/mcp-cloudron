@@ -42,12 +42,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/halecraft/mcp-cloudron.git"
+    "url": "git+https://github.com/mattstyles333/mcp-cloudron.git"
   },
   "bugs": {
-    "url": "https://github.com/halecraft/mcp-cloudron/issues"
+    "url": "https://github.com/mattstyles333/mcp-cloudron/issues"
   },
-  "homepage": "https://github.com/halecraft/mcp-cloudron#readme",
+  "homepage": "https://github.com/mattstyles333/mcp-cloudron#readme",
   "engines": {
     "node": ">=20.0.0"
   },
