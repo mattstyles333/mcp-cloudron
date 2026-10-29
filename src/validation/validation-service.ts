@@ -184,7 +184,7 @@ export class ValidationService {
       const app = await this.dataProvider.getAppStoreApp(appStoreId)
       if (app.manifest.addons && "docker" in app.manifest.addons) {
         result.warnings.push(
-          "This app uses the docker addon; Cloudron only lets the owner role install it, and API tokens act as admin.",
+          "This app uses the docker addon; Cloudron only lets the owner role install it, so an admin-role API token will be refused.",
         )
       }
     } catch (error) {

@@ -60,7 +60,7 @@ Backups only block on a critically full root disk: backup sites are usually off-
 - Platform update: `GET/POST /updater/box_update`.
 - Tasks: `GET /tasks/:id` (`running`, `active`, `success`, `error.code` = `stopped`/`crashed`/`timeout`), `POST /tasks/:id/stop`.
 - `GET /appstore/apps` returns the whole catalogue and ignores query parameters.
-- API tokens act as role `admin`; owner-only operations are refused. Read-only tokens (`scope {"*": "r"}`) may only GET.
+- API tokens act with the role stored on the token (default `admin`); with an admin token, owner-only operations are refused. Read-only tokens (`scope {"*": "r"}`) may only GET.
 
 ## Tests
 

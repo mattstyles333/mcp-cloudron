@@ -604,7 +604,7 @@ const API_TOOLS: ToolDefinition[] = [
   {
     name: "cloudron_create_user",
     description:
-      "Create a user. Without a password, set sendInvite so they can sign up by email. API tokens act as admin, so they cannot create owners.",
+      "Create a user. Without a password, set sendInvite so they can sign up by email. An admin-role API token cannot create owners.",
     inputSchema: {
       type: "object",
       properties: {

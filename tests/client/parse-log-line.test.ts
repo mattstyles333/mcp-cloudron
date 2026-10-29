@@ -29,6 +29,43 @@ describe("parseLogLine", () => {
       expect(result.message).toBe("hello")
     })
 
+    // Regression: Cloudron 9/10 send microseconds as a number (logs.js
+    // realtimeTimestamp: ms * 1000); upstream only accepted strings and
+    // showed every live line as raw JSON stamped with the current time
+    it("should parse Cloudron's numeric microsecond timestamps", () => {
+      const result = parseLogLine(
+        '{"realtimeTimestamp":1793252514159000,"message":"apptask: run: startTask","source":"app-1"}',
+      )
+      expect(result.timestamp).toBe(new Date(1793252514159).toISOString())
+      expect(result.message).toBe("apptask: run: startTask")
+    })
+
+    it("should mark a zero timestamp as unknown", () => {
+      const result = parseLogLine('{"realtimeTimestamp":0,"message":"x"}')
+      expect(result.timestamp).toBe("unknown time")
+    })
+
+    it("should take severity from a level word in the message", () => {
+      expect(
+        parseLogLine(
+          '{"realtimeTimestamp":1793252514159000,"message":"[ERROR] db connection refused"}',
+        ).severity,
+      ).toBe("ERROR")
+      expect(
+        parseLogLine(
+          '{"realtimeTimestamp":1793252514159000,"message":"time=x level=warn msg=slow"}',
+        ).severity,
+      ).toBe("WARN")
+    })
+
+    it("should not mistake JSON keys for a level", () => {
+      expect(
+        parseLogLine(
+          '{"realtimeTimestamp":1793252514159000,"message":"tasks: setCompleted - 1: {\\"error\\":null}"}',
+        ).severity,
+      ).toBe("INFO")
+    })
+
     it("should fall through to regex if NDJSON lacks required fields", () => {
       const line = '{"foo":"bar"}'
 

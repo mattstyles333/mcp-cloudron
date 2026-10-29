@@ -32,7 +32,7 @@ Pre-flight checks run before risky operations: the backup belongs to the app bei
 | `CLOUDRON_API_TOKEN` | yes | API token from **Settings → API Tokens** in the dashboard. |
 | `CLOUDRON_ACCESS` | no | `read` (default), `write` or `all`. |
 
-API tokens act with the **admin** role, not owner: Cloudron refuses some owner-only actions (creating owners, apps with the docker addon) for them.
+An API token acts with the role it was created with (Cloudron 10 defaults to **admin**). With an admin token, Cloudron refuses owner-only actions such as creating owners or installing apps that use the docker addon.
 
 ## Running it
 

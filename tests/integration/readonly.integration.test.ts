@@ -46,6 +46,13 @@ describe.runIf(!skip)("read-only tools against a live Cloudron", () => {
     }
     if (user) args.cloudron_get_user = { userId: user.id }
     args.cloudron_list_eventlog = { limit: 5 }
+
+    const tasks = await ctx.http.get<{ tasks: { id: string }[] }>(
+      "/api/v1/tasks",
+      { query: { page: 1, per_page: 1 } },
+    )
+    const [task] = tasks.tasks
+    if (task) args.cloudron_task_status = { taskId: task.id }
     args.cloudron_search_apps = { query: "wordpress" }
     args.cloudron_list_notifications = { limit: 5 }
     args.cloudron_check_storage = { requiredMB: 100 }
@@ -63,15 +70,6 @@ describe.runIf(!skip)("read-only tools against a live Cloudron", () => {
     if (needsArgs && !toolArgs) {
       console.warn(`${name}: no suitable resource on this Cloudron, skipped`)
       return
-    }
-    if (name === "cloudron_task_status") {
-      const tasks = await ctx.http.get<{ tasks: { id: string }[] }>(
-        "/api/v1/tasks",
-        { query: { page: 1, per_page: 1 } },
-      )
-      const [task] = tasks.tasks
-      if (!task) return
-      Object.assign(args, { [name]: { taskId: task.id } })
     }
 
     const response = await callTool(name, args[name] ?? {}, "read", () => ctx)

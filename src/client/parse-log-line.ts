@@ -22,8 +22,40 @@ const SEVERITY_LEVELS = [
 ] as const
 
 /**
+ * Cloudron sends realtimeTimestamp as microseconds since the epoch
+ * (0 when unknown); older formats used an ISO string.
+ */
+function formatRealtimeTimestamp(value: unknown): string | null {
+  if (typeof value === "string") return value
+  if (typeof value === "number") {
+    return value > 0 ? new Date(value / 1000).toISOString() : "unknown time"
+  }
+  return null
+}
+
+/**
+ * NDJSON lines carry no severity; take it from a level word near the start
+ * of the message (e.g. "[ERROR] ...", "level=warn", "WARNING: ...").
+ */
+const LEVEL = "(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)"
+const LEVEL_PATTERNS = [
+  new RegExp(`^\\s*\\[?${LEVEL}\\]?(?::|\\s)`, "i"), // "ERROR: x", "[warn] x"
+  new RegExp(`\\[${LEVEL}\\]`, "i"), // "app [ERROR] x"
+  new RegExp(`\\blevel=["']?${LEVEL}\\b`, "i"), // "level=warn"
+]
+
+function severityFromMessage(message: string): string {
+  const head = message.slice(0, 80)
+  for (const pattern of LEVEL_PATTERNS) {
+    const level = head.match(pattern)?.[1]
+    if (level) return level.toUpperCase()
+  }
+  return "INFO"
+}
+
+/**
  * Try to parse a line as NDJSON (newline-delimited JSON).
- * The Cloudron logs API returns NDJSON by default, where each line
+ * The Cloudron logs API returns NDJSON with format=json, where each line
  * is a JSON object with `realtimeTimestamp` and `message` fields.
  */
 function tryParseNdjson(line: string): LogEntry | null {
@@ -32,12 +64,13 @@ function tryParseNdjson(line: string): LogEntry | null {
     if (
       typeof parsed === "object" &&
       parsed !== null &&
-      typeof parsed.realtimeTimestamp === "string" &&
       typeof parsed.message === "string"
     ) {
+      const timestamp = formatRealtimeTimestamp(parsed.realtimeTimestamp)
+      if (timestamp === null) return null
       return {
-        timestamp: parsed.realtimeTimestamp,
-        severity: "INFO", // NDJSON doesn't carry severity
+        timestamp,
+        severity: severityFromMessage(parsed.message),
         message: parsed.message,
       }
     }

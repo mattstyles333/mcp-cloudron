@@ -21,6 +21,7 @@ Checked against the Cloudron box server source for 9.0.15 and 10.1.6.
 - **`cloudron_update_user`**: role enum was `admin/user/guest`; now Cloudron's real roles. The advertised `password` field was silently ignored; Cloudron's API has no admin password reset, so it is now refused with an explanation.
 - **Last-owner check**: checked for the last `admin`; Cloudron's protected role is `owner`.
 - **Backup states**: checked `uploaded`/`created`; Cloudron uses `normal`, so the "recent backup" check never passed.
+- **`cloudron_get_logs`**: Cloudron sends `realtimeTimestamp` as microseconds (a number); the parser only accepted strings, so every line showed as raw JSON stamped with the current time. Severity now comes from explicit level markers in the message.
 - Groups no longer print `Invalid Date`; task states include `stopped`; the server reports its real version.
 
 ### Added
