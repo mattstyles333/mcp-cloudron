@@ -38,5 +38,5 @@ export function accessDeniedMessage(
   level: AccessLevel,
 ): string {
   const needed = toolAccess(tool) === "destructive" ? "all" : "write"
-  return `${tool.name} is disabled: CLOUDRON_ACCESS is '${level}', this tool needs '${needed}'. The server operator must change CLOUDRON_ACCESS (and use a read-write API token) to allow it.`
+  return `${tool.name} is disabled: this connection has '${level}' access and the tool needs '${needed}'. To allow it, raise the client key's level in the Cloudron MCP app (or CLOUDRON_ACCESS for a local server); writes also need a read-write Cloudron API token.`
 }

@@ -4,6 +4,47 @@ MCP server for [Cloudron](https://cloudron.io/) instance management: apps, backu
 
 Forked from [halecraft/mcp-cloudron](https://github.com/halecraft/mcp-cloudron) 0.5.0. This fork targets **Cloudron 9.0 and 10.x**, fixes the endpoints that no longer exist, and adds an access model so an agent can only do what you allow. See [CHANGELOG.md](CHANGELOG.md).
 
+There are two ways to run it:
+
+- **As a Cloudron app** (below): one install on your Cloudron, a settings page, and a key per client. Clients connect over HTTPS from anywhere.
+- **As a local server** over stdio, configured with environment variables. See [Running it locally](#running-it-locally).
+
+## Cloudron app
+
+![Settings page](docs/screenshot.png)
+
+Requires Cloudron 10. In the dashboard, open the App Store, choose **Add custom app → Community app**, and paste:
+
+```
+https://raw.githubusercontent.com/mattstyles333/mcp-cloudron/main/CloudronVersions.json
+```
+
+Then open the app:
+
+1. **Cloudron API token.** Create one under **Settings → API Tokens** and paste it in. The app checks it with Cloudron and reports whether it is read-only or read-write.
+2. **Maximum access.** Choose the most any client may do: read only, read & write (default), or everything. Everything includes the destructive tools.
+3. **Client keys.** Create one per client (laptop, agent, teammate), each with its own access level. A key is shown once; the page gives ready-made setup for Claude Code and opencode:
+
+   ```shell
+   claude mcp add --transport http cloudron https://mcp.example.com/mcp \
+     --header "Authorization: Bearer mcpc_..."
+   ```
+
+**What a client may do** is the lowest of: its key's level, the maximum access level, and what the API token allows. A read-only token keeps every client read-only.
+
+**Who may change settings:**
+
+- The settings page is behind the Cloudron login.
+- Once a working token is saved, only Cloudron owners and admins can manage the app; the app checks the signed-in user's role with Cloudron.
+- Before that, anyone allowed into the app can set it up, so restrict the app to admins in its Access Control settings if other users can reach it.
+- If Cloudron later rejects the stored token, setup reopens so it can be replaced. A replacement token only carries its owner's own rights.
+
+**Other details:**
+
+- Recent tool calls are listed with the key that made them. Only IDs and names are logged, never env values or passwords.
+- Keys are stored as SHA-256 hashes. The API token is stored in the app's data directory, so it is part of the app's backups; encrypt your backup site.
+- The MCP endpoint is stateless Streamable HTTP at `/mcp`. OAuth sign-in for clients is not supported yet, so clients must send a bearer key; that rules out claude.ai custom connectors for now.
+
 ## Safety model
 
 Three layers, from strongest to weakest:
@@ -24,7 +65,7 @@ Every tool also carries MCP annotations (`readOnlyHint`, `destructiveHint`, `ide
 
 Pre-flight checks run before risky operations: the backup belongs to the app being restored, the clone target is free, the last owner cannot be deleted, an uninstalled app has a recent backup (warning), and the root disk is not critically full.
 
-## Configuration
+## Configuration (local server)
 
 | Variable | Required | Description |
 |---|---|---|
@@ -34,7 +75,7 @@ Pre-flight checks run before risky operations: the backup belongs to the app bei
 
 An API token acts with the role it was created with (Cloudron 10 defaults to **admin**). With an admin token, Cloudron refuses owner-only actions such as creating owners or installing apps that use the docker addon.
 
-## Running it
+## Running it locally
 
 ```shell
 pnpm install
@@ -118,6 +159,12 @@ Keep the token out of config files you commit; load it from the environment wher
 ```shell
 pnpm verify            # format, types, unit tests
 pnpm test:integration  # read-only smoke test against a real Cloudron (needs the env vars)
+```
+
+The Cloudron package is `CloudronManifest.json`, `Dockerfile` and `start.sh`. The GitHub workflow tests every push, builds the image and runs it the way Cloudron does (read-only root filesystem, writable `/app/data`). Pushing a `v<version>` tag also publishes `ghcr.io/mattstyles333/mcp-cloudron:<version>`. After that, record the release:
+
+```shell
+node scripts/cloudron-versions.mjs ghcr.io/mattstyles333/mcp-cloudron:<version>
 ```
 
 Unit tests run against a fake Cloudron that only accepts routes which exist in every supported Cloudron version. The route table in `tests/fixtures/cloudron-routes.json` is extracted from Cloudron's own server source:

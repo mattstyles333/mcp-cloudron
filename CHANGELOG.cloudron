@@ -1,0 +1,5 @@
+[0.7.0]
+* Initial Cloudron package
+* Settings page behind the Cloudron login: API token, maximum access level, per-client keys, recent activity
+* MCP over HTTP at /mcp with per-client bearer keys
+* 42 tools for apps, backups, users, groups, services, logs, the event log and platform updates

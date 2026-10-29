@@ -5,27 +5,36 @@
  * combining all documentation files and reference implementation examples.
  */
 
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
 /**
- * Get the path to the resources/content directory
+ * The package root: the nearest directory above this file with a
+ * package.json. Works from src/resources/ in development and from the flat
+ * bundle in dist/.
  */
+function packageRoot(): string {
+  let dir = dirname(fileURLToPath(import.meta.url))
+  while (!existsSync(join(dir, "package.json"))) {
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return dir
+}
+
+const ROOT = packageRoot()
+
 function getContentPath(): string {
-  // In development: src/resources -> resources/content
-  // In production (dist): dist/resources -> resources/content
-  return join(__dirname, "..", "..", "resources", "content")
+  return join(ROOT, "resources", "content")
 }
 
 /**
- * Get the path to the vendor/rocketchat-app directory
+ * Optional local copy of the Rocket.Chat package used as a reference
  */
 function getVendorPath(): string {
-  return join(__dirname, "..", "..", "vendor", "rocketchat-app")
+  return join(ROOT, "vendor", "rocketchat-app")
 }
 
 /**
@@ -48,7 +57,7 @@ function loadReferenceFile(filename: string): string {
     const filepath = join(getVendorPath(), filename)
     return readFileSync(filepath, "utf-8")
   } catch {
-    return `[Error: Could not load ${filename}]`
+    return `(Reference ${filename} is not bundled. Fetch a real one with cloudron_fetch_package_example, e.g. appId "chat.rocket.cloudronapp".)`
   }
 }
 

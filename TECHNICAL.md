@@ -4,7 +4,13 @@
 
 ```
 src/
-  server.ts            MCP stdio server: lists tools for the access level, dispatches calls
+  server.ts            local MCP server over stdio
+  mcp-server.ts        MCP server factory shared by stdio and HTTP
+  http/                the Cloudron app
+    main.ts            entry point (dist/app.js)
+    app.ts             /mcp endpoint, settings API, static UI
+    store.ts           settings, hashed client keys, activity log in /app/data
+    cloudron-checks.ts token check (incl. read/write probe) and role lookup
   config.ts            constants and CLOUDRON_ACCESS parsing
   client/              one module per Cloudron API area, all built on http-client.ts
     context.ts         wires the modules and the validation service together
@@ -18,6 +24,19 @@ src/
   validation/          pre-flight checks (validation-service.ts) and package linting
   scaffolding/, resources/, git/   packaging helpers
 ```
+
+## Cloudron app
+
+The manifest uses the `proxyAuth` addon with `supportsBearerAuth`. nginx then:
+
+- sends requests carrying `Authorization: Bearer` straight to the app, where `/mcp` requires a client key from the store;
+- puts every other request behind the Cloudron login and sets `X-Remote-User`. That header is blanked on bearer requests, so it cannot be forged; the settings API also refuses any request with a bearer.
+
+Settings changes need `X-Requested-With: cloudron-mcp` (a custom header, which cannot be sent cross-site without a CORS preflight that the app never grants). The signed-in user's role comes from `GET /users?search=` with the stored token, cached for 60 seconds. If that lookup fails with 401/403 (token rejected), setup reopens; any other failure answers 503 rather than granting access.
+
+The token's write ability is probed with `POST /groups {}`. Cloudron checks token scope before validating the body, so a read-only token gets 403, a read-write one gets 400, and nothing is created.
+
+Each MCP request builds a fresh server and stateless transport (`enableJsonResponse`) with the key's effective level: the lowest of the key's level, the maximum level, and `read` when the token is read-only.
 
 ## HTTP layer
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- **Cloudron app**: install as a community app (Cloudron 10+). Serves MCP over Streamable HTTP at `/mcp` and a settings page behind the Cloudron login with:
+  - the Cloudron API token, checked when saved and reported as read-only or read-write;
+  - a maximum access level (read, read & write, everything);
+  - per-client keys with their own levels, stored hashed;
+  - recent tool calls per key.
+- Only Cloudron owners and admins can change settings once a token is configured.
+- The access-denied message now fits both the local server and the app.
+- Fixed: the packaging guide could not find its documentation files when run from the built `dist/`; the missing bundled example now points to `cloudron_fetch_package_example`.
+
 ## 0.6.0 (fork of halecraft/mcp-cloudron 0.5.0)
 
 Checked against the Cloudron box server source for 9.0.15 and 10.1.6.

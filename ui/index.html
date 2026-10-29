@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloudron MCP</title>
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <img src="logo.svg" alt="" width="36" height="36" />
+      <div>
+        <h1>Cloudron MCP</h1>
+        <p class="muted" id="subtitle">Loading…</p>
+      </div>
+    </header>
+
+    <main>
+      <div id="banner" class="banner" hidden></div>
+
+      <section id="denied" class="card" hidden>
+        <h2>Not allowed</h2>
+        <p id="denied-text"></p>
+      </section>
+
+      <div id="content" hidden>
+        <section class="card">
+          <h2>1. Cloudron API token</h2>
+          <p class="muted">
+            The app acts on your Cloudron with this token. Create one in your
+            dashboard under <strong>Settings → API Tokens</strong>. A
+            read-only token limits every client to read tools.
+          </p>
+          <div id="token-status" class="status"></div>
+          <form id="token-form" class="row">
+            <input id="token-input" type="password" autocomplete="off"
+              placeholder="Paste a Cloudron API token" />
+            <button type="submit">Save token</button>
+          </form>
+          <div class="row">
+            <button type="button" id="token-check" class="secondary">Re-check</button>
+            <button type="button" id="token-remove" class="danger">Remove token</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>2. Maximum access</h2>
+          <p class="muted">
+            The most any client key may do. Each key can be set lower below.
+          </p>
+          <div id="access-options" class="options"></div>
+        </section>
+
+        <section class="card">
+          <h2>3. Client keys</h2>
+          <p class="muted">
+            Give each MCP client (laptop, agent, teammate) its own key, so you
+            can limit or revoke it on its own.
+          </p>
+          <form id="key-form" class="row">
+            <input id="key-name" maxlength="60" placeholder="Key name, e.g. laptop opencode" required />
+            <select id="key-access"></select>
+            <button type="submit">Create key</button>
+          </form>
+          <div id="new-key" class="new-key" hidden>
+            <p><strong>Copy this key now.</strong> It will not be shown again.</p>
+            <div class="row">
+              <code id="new-key-secret" class="secret"></code>
+              <button type="button" id="copy-key" class="secondary">Copy</button>
+            </div>
+            <details>
+              <summary>Client setup</summary>
+              <p>Claude Code:</p>
+              <pre id="snippet-claude"></pre>
+              <p>opencode (<code>opencode.json</code>, under <code>mcp</code>):</p>
+              <pre id="snippet-opencode"></pre>
+            </details>
+          </div>
+          <table id="keys-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Access</th><th>Created</th><th>Last used</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="keys-empty" class="muted" hidden>No keys yet.</p>
+        </section>
+
+        <section class="card">
+          <h2>Recent activity</h2>
+          <table id="activity-table">
+            <thead>
+              <tr><th>Time</th><th>Key</th><th>Tool</th><th>Result</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="activity-empty" class="muted" hidden>No tool calls yet.</p>
+        </section>
+      </div>
+    </main>
+
+    <footer class="muted" id="footer"></footer>
+  </body>
+</html>

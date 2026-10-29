@@ -1,0 +1,86 @@
+name: Cloudron app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: ./node_modules/.bin/biome ci .
+      - run: ./node_modules/.bin/tsgo --noEmit --skipLibCheck
+      - run: ./node_modules/.bin/tsgo --noEmit --skipLibCheck -p tests/tsconfig.json
+      - run: ./node_modules/.bin/vitest run --project unit
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/mcp-cloudron
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read package version
+        id: version
+        run: |
+          version=$(jq -r .version CloudronManifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$version" ]]; then
+            echo "Tag ${GITHUB_REF#refs/tags/} does not match manifest version $version" >&2
+            exit 1
+          fi
+
+      - name: Build image
+        run: docker build -t "$IMAGE:${{ steps.version.outputs.version }}" .
+
+      # Run it the way Cloudron does: read-only root, writable /app/data and /tmp
+      - name: Smoke test
+        run: |
+          docker volume create appdata
+          docker run -d --name app --read-only --tmpfs /tmp --tmpfs /run \
+            -v appdata:/app/data -p 3000:3000 \
+            -e CLOUDRON_API_ORIGIN=https://my.example.com \
+            -e CLOUDRON_APP_ORIGIN=https://mcp.example.com \
+            "$IMAGE:${{ steps.version.outputs.version }}"
+          for i in $(seq 1 30); do curl -fs localhost:3000/healthz && break; sleep 1; done
+          curl -fs localhost:3000/healthz
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3000/mcp)" = 401
+          curl -fs localhost:3000/ | grep -q "Cloudron MCP"
+          curl -fs -H "X-Remote-User: ci" localhost:3000/api/state | jq -e '.viewer.bootstrap == true'
+          curl -fs -X POST -H "X-Remote-User: ci" -H "X-Requested-With: cloudron-mcp" \
+            -H "Content-Type: application/json" -d '{"name":"ci","access":"read"}' \
+            localhost:3000/api/keys | jq -r .secret > key.txt
+          curl -fs -X POST localhost:3000/mcp \
+            -H "Authorization: Bearer $(cat key.txt)" \
+            -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '.result.tools | length == 24'
+          docker exec app ls -l /app/data/state.json
+          docker exec app stat -c '%U %a' /app/data/state.json | grep -q "cloudron 600"
+          docker logs app
+
+      - name: Push to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:${{ steps.version.outputs.version }}"
+          docker tag "$IMAGE:${{ steps.version.outputs.version }}" "$IMAGE:latest"
+          docker push "$IMAGE:latest"

@@ -26,6 +26,10 @@ import type {
 } from "../../src/types"
 
 export const BASE_URL = "https://my.example.com"
+
+// Requests to the app under test (localhost) go to the real network
+const realFetch = globalThis.fetch.bind(globalThis)
+const LOCAL_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/
 export const TOKEN = "test-token-12345"
 
 const routeFixture: Record<string, string[]> = JSON.parse(
@@ -113,7 +117,10 @@ export function createFakeCloudron(
 
   const fetchImpl = vi.fn(
     async (input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(typeof input === "string" ? input : input.toString())
+      const url = new URL(
+        typeof input === "string" || input instanceof URL ? input : input.url,
+      )
+      if (LOCAL_ORIGIN.test(url.origin)) return realFetch(input, init)
       const method = init?.method ?? "GET"
       const path = url.pathname
       const key = `${method} ${path}`

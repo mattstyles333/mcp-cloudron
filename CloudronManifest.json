@@ -1,0 +1,37 @@
+{
+  "manifestVersion": 2,
+  "id": "io.github.mattstyles333.cloudronmcp",
+  "title": "Cloudron MCP",
+  "tagline": "Let AI assistants manage your Cloudron over MCP",
+  "description": "file://DESCRIPTION.md",
+  "changelog": "file://CHANGELOG.cloudron",
+  "postInstallMessage": "file://POSTINSTALL.md",
+  "version": "0.7.0",
+  "upstreamVersion": "0.7.0",
+  "minBoxVersion": "10.0.0",
+  "httpPort": 3000,
+  "healthCheckPath": "/healthz",
+  "memoryLimit": 268435456,
+  "addons": {
+    "localstorage": {},
+    "proxyAuth": {
+      "supportsBearerAuth": true
+    }
+  },
+  "website": "https://github.com/mattstyles333/mcp-cloudron",
+  "packageUrl": "https://github.com/mattstyles333/mcp-cloudron",
+  "documentationUrl": "https://github.com/mattstyles333/mcp-cloudron#readme",
+  "packagerName": "mattstyles333",
+  "packagerUrl": "https://github.com/mattstyles333",
+  "icon": "file://logo.png",
+  "iconUrl": "https://raw.githubusercontent.com/mattstyles333/mcp-cloudron/main/logo.png",
+  "mediaLinks": [
+    "https://raw.githubusercontent.com/mattstyles333/mcp-cloudron/main/docs/screenshot.png"
+  ],
+  "tags": [
+    "developer",
+    "automation",
+    "ai",
+    "mcp"
+  ]
+}

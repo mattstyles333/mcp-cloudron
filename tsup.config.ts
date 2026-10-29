@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     server: "src/server.ts",
     index: "src/index.ts",
+    app: "src/http/main.ts",
   },
   format: ["esm"],
   dts: true,
@@ -11,6 +12,6 @@ export default defineConfig({
   shims: false,
   splitting: false,
   sourcemap: false,
-  target: "node18",
+  target: "node20",
   outDir: "dist",
 })
