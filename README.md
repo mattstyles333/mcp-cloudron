@@ -1,274 +1,136 @@
 # mcp-cloudron
 
-[![npm version](https://badge.fury.io/js/%40halecraft%2Fmcp-cloudron.svg)](https://www.npmjs.com/package/@halecraft/mcp-cloudron)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![MCP](https://img.shields.io/badge/MCP-Compatible-blue.svg)](https://modelcontextprotocol.io)
+MCP server for [Cloudron](https://cloudron.io/) instance management: apps, backups, users, services, logs, the event log and platform updates, plus helpers for packaging apps.
 
-MCP server for [Cloudron](https://cloudron.io) instance management. Manage apps, backups, users, and more through the Model Context Protocol.
+Forked from [halecraft/mcp-cloudron](https://github.com/halecraft/mcp-cloudron) 0.5.0. This fork targets **Cloudron 9.0 and 10.x**, fixes the endpoints that no longer exist, and adds an access model so an agent can only do what you allow. See [CHANGELOG.md](CHANGELOG.md).
 
-## Features
+## Safety model
 
-- **App Management** - List, install, uninstall, start, stop, restart, clone, repair, update, and backup applications
-- **Backup Operations** - List and create instance backups
-- **User Management** - List, create, update, and delete users with role assignment
-- **Group Management** - List and create groups for access control
-- **System Monitoring** - Check instance status, storage, services, and platform updates
-- **Pre-flight Safety** - Validation checks before destructive operations
-- **Async Task Tracking** - Monitor and cancel long-running operations
-- **Packaging Guide** - Interactive documentation for creating Cloudron packages
+Three layers, from strongest to weakest:
 
-## Installation
+1. **The API token.** Cloudron tokens are read-only or read-write. A read-only token can only make GET requests, whatever this server does. Use one unless you need writes.
+2. **`CLOUDRON_ACCESS`** decides which tools the server offers at all:
 
-```bash
-npm install @halecraft/mcp-cloudron
-```
+   | Level | Tools | Use with |
+   |---|---|---|
+   | `read` (default) | 24 read-only tools + packaging helpers | read-only token |
+   | `write` | adds tools that change state but can be undone or redone: start/stop/restart, configure, install, clone, repair, update app, backups, create/update users and groups, restart service, stop task | read-write token |
+   | `all` | adds destructive tools: uninstall app, restore app, delete user, apply platform update | read-write token |
 
-Or run directly with npx:
+   Hidden tools are also refused if called by name.
+3. **Confirmation arguments.** Destructive tools make the caller repeat the target's human-readable name: `confirm` must equal the app's fqdn (uninstall, restore) or the user's email (delete user). `cloudron_apply_update` needs the exact pending version. A wrong or stale ID therefore fails instead of hitting the wrong app.
 
-```bash
-npx @halecraft/mcp-cloudron
-```
+Every tool also carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), so clients can ask for approval on writes.
+
+Pre-flight checks run before risky operations: the backup belongs to the app being restored, the clone target is free, the last owner cannot be deleted, an uninstalled app has a recent backup (warning), and the root disk is not critically full.
 
 ## Configuration
 
-### Environment Variables
+| Variable | Required | Description |
+|---|---|---|
+| `CLOUDRON_BASE_URL` | yes | Dashboard URL, e.g. `https://my.example.com`. Must be `https://` (plain http only for localhost). |
+| `CLOUDRON_API_TOKEN` | yes | API token from **Settings → API Tokens** in the dashboard. |
+| `CLOUDRON_ACCESS` | no | `read` (default), `write` or `all`. |
 
-| Variable             | Required | Description                                                 |
-| -------------------- | -------- | ----------------------------------------------------------- |
-| `CLOUDRON_BASE_URL`  | Yes      | Your Cloudron instance URL (e.g., `https://my.cloudron.io`) |
-| `CLOUDRON_API_TOKEN` | Yes      | API token from Cloudron Admin Panel                         |
+API tokens act with the **admin** role, not owner: Cloudron refuses some owner-only actions (creating owners, apps with the docker addon) for them.
 
-### Getting an API Token
+## Running it
 
-1. Log in to your Cloudron Admin Panel
-2. Go to **Settings → API Tokens**
-3. Click **Create API Token**
-4. Give it a name (e.g., "MCP Server")
-5. Select **Read and Write** permissions
-6. Copy the generated token
+```shell
+pnpm install
+pnpm build
+```
 
-## Usage with Claude Desktop
-
-Add to your Claude Desktop configuration (`claude_desktop_config.json`):
+### opencode
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "cloudron": {
-      "command": "npx",
-      "args": ["-y", "@halecraft/mcp-cloudron"],
-      "env": {
-        "CLOUDRON_BASE_URL": "https://your-cloudron-instance.com",
-        "CLOUDRON_API_TOKEN": "your-api-token"
+      "type": "local",
+      "command": ["node", "/path/to/mcp-cloudron/dist/server.js"],
+      "environment": {
+        "CLOUDRON_BASE_URL": "https://my.example.com",
+        "CLOUDRON_API_TOKEN": "{env:CLOUDRON_API_TOKEN}",
+        "CLOUDRON_ACCESS": "read"
       }
     }
   }
 }
 ```
 
-## Available Tools
+### Claude Desktop / Claude Code
 
-### App Management
+```json
+{
+  "mcpServers": {
+    "cloudron": {
+      "command": "node",
+      "args": ["/path/to/mcp-cloudron/dist/server.js"],
+      "env": {
+        "CLOUDRON_BASE_URL": "https://my.example.com",
+        "CLOUDRON_API_TOKEN": "your-api-token",
+        "CLOUDRON_ACCESS": "read"
+      }
+    }
+  }
+}
+```
 
-| Tool | Description |
-|------|-------------|
-| `cloudron_list_apps` | List all installed applications with status and health |
-| `cloudron_get_app` | Get detailed information about a specific application |
-| `cloudron_control_app` | Start, stop, or restart an application |
-| `cloudron_configure_app` | Update environment variables, memory limits, access control |
-| `cloudron_install_app` | Install an application from the App Store |
-| `cloudron_uninstall_app` | Uninstall an application (with pre-flight validation) |
-| `cloudron_clone_app` | Clone an application to a new location |
-| `cloudron_repair_app` | Repair a broken application |
-| `cloudron_update_app` | Update an application to a newer version |
-| `cloudron_restore_app` | Restore an application from a backup |
-| `cloudron_backup_app` | Create a backup of a specific application |
+Keep the token out of config files you commit; load it from the environment where your client supports that.
 
-### App Store
+## Tools
 
-| Tool | Description |
-|------|-------------|
-| `cloudron_search_apps` | Search the Cloudron App Store |
-| `cloudron_validate_manifest` | Validate an app before installation |
+**Read** (always available)
 
-### Backups
+| Tool | What it does |
+|---|---|
+| `cloudron_get_status` | Version, server, uptime, reboot required, pending platform update |
+| `cloudron_list_apps` / `cloudron_get_app` | Apps with state, health, errors and pending updates. Env values are hidden. |
+| `cloudron_list_app_backups` | One app's backups, newest first |
+| `cloudron_list_backups` / `cloudron_list_backup_sites` | Full backups and backup destinations |
+| `cloudron_get_logs` | Recent log lines of an app, platform service or task |
+| `cloudron_list_services` | Platform services with status and memory |
+| `cloudron_list_eventlog` | Audit log, filterable by app, action, text and date |
+| `cloudron_list_notifications` | Dashboard notifications (failed backups, app errors...) |
+| `cloudron_task_status` | Progress of an async task |
+| `cloudron_check_storage` | Free space on the root disk |
+| `cloudron_list_domains` | Configured domains |
+| `cloudron_list_users` / `cloudron_get_user` / `cloudron_list_groups` | Users and groups |
+| `cloudron_search_apps` / `cloudron_validate_manifest` | App Store search and pre-install check |
+| `cloudron_check_updates` | Pending platform update and changelog |
+| `cloudron_validate_operation` | Dry-run of the checks for uninstall, restore or delete user |
 
-| Tool | Description |
-|------|-------------|
-| `cloudron_list_backups` | List all available backups |
-| `cloudron_create_backup` | Create a new instance backup |
+**Write** (`CLOUDRON_ACCESS=write`)
 
-### Users
+`cloudron_control_app`, `cloudron_configure_app` (env merged, memory in MB, access, label, tags, auto-update, auto-backup), `cloudron_install_app`, `cloudron_clone_app`, `cloudron_repair_app`, `cloudron_update_app`, `cloudron_backup_app`, `cloudron_create_backup`, `cloudron_cancel_task`, `cloudron_restart_service`, `cloudron_acknowledge_notification`, `cloudron_create_user`, `cloudron_update_user`, `cloudron_create_group`
 
-| Tool | Description |
-|------|-------------|
-| `cloudron_list_users` | List all users |
-| `cloudron_get_user` | Get details for a specific user |
-| `cloudron_create_user` | Create a new user with role assignment |
-| `cloudron_update_user` | Update user properties (email, role, password) |
-| `cloudron_delete_user` | Delete a user (with pre-flight validation) |
+**Destructive** (`CLOUDRON_ACCESS=all`)
 
-### Groups
+`cloudron_uninstall_app`, `cloudron_restore_app`, `cloudron_delete_user`, `cloudron_apply_update`
 
-| Tool | Description |
-|------|-------------|
-| `cloudron_list_groups` | List all groups |
-| `cloudron_create_group` | Create a new group |
+**Packaging helpers** (no credentials needed)
 
-### System
-
-| Tool | Description |
-|------|-------------|
-| `cloudron_get_status` | Get Cloudron instance status and version |
-| `cloudron_check_storage` | Check available disk space |
-| `cloudron_list_services` | List platform services (MySQL, PostgreSQL, etc.) |
-| `cloudron_list_domains` | List configured domains |
-| `cloudron_get_logs` | Retrieve application or service logs |
-
-### Tasks
-
-| Tool | Description |
-|------|-------------|
-| `cloudron_task_status` | Check status of an async operation |
-| `cloudron_cancel_task` | Cancel a running operation |
-| `cloudron_validate_operation` | Pre-flight validation for destructive operations |
-
-### Updates
-
-| Tool | Description |
-|------|-------------|
-| `cloudron_check_updates` | Check for Cloudron platform updates |
-| `cloudron_apply_update` | Apply a platform update |
-
-### Package Development
-
-| Tool | Description |
-|------|-------------|
-| `cloudron_packaging_guide` | Get interactive guidance for creating Cloudron packages |
-| `cloudron_scaffold_package` | Generate a complete package scaffold with all required files |
-| `cloudron_validate_package` | Validate package files for errors and best practices |
-
-#### Packaging Guide Topics
-
-- `overview` - Quick start checklist and workflow
-- `manifest` - CloudronManifest.json field reference with examples
-- `dockerfile` - Dockerfile best practices and base image usage
-- `addons` - Available platform services (databases, auth, email, caching)
-- `testing` - Integration test structure and patterns
-- `publishing` - App Store submission process
-
-#### Scaffold Package Options
-
-Generate ready-to-use package files customized for your application:
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `appType` | Yes | Application type: `nodejs`, `php`, `python`, `java`, `go`, `static` |
-| `appName` | Yes | Name of your application |
-| `appId` | No | Reverse domain ID (e.g., `com.example.myapp`) |
-| `version` | No | Initial version (default: `1.0.0`) |
-| `httpPort` | No | HTTP port (default: `8000`) |
-| `healthCheckPath` | No | Health check path (default: `/`) |
-| `addons` | No | Required addons: `localstorage`, `mysql`, `postgresql`, `mongodb`, `redis`, `ldap`, `oidc`, `sendmail`, `recvmail`, `scheduler` |
-| `authMethod` | No | Authentication: `ldap`, `oidc`, `proxyAuth`, `none` |
-| `memoryLimit` | No | Memory limit in bytes |
-
-#### Validate Package
-
-Check your package files for errors and best practices:
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `manifest` | No | CloudronManifest.json content |
-| `dockerfile` | No | Dockerfile content |
-| `startScript` | No | start.sh content |
-
-At least one file must be provided. Returns detailed validation report with errors, warnings, and suggestions.
-
-## Available Resources
-
-| Resource URI | Description |
-|--------------|-------------|
-| `cloudron://packaging-guide` | Complete Cloudron packaging documentation with reference implementation |
-
-## Example Usage
-
-Once configured, you can ask Claude to manage your Cloudron instance:
-
-**Instance Management:**
-- "List all my Cloudron apps"
-- "What's the status of my Cloudron instance?"
-- "Install Nextcloud on cloud.mydomain.com"
-- "Create a backup of my instance"
-- "Show me the logs for my WordPress app"
-- "Create a new admin user with email admin@example.com"
-
-**Package Development:**
-- "Help me create a Cloudron package for my Node.js app"
-- "Generate a scaffold for a Python app with PostgreSQL and Redis"
-- "Scaffold a PHP app with OIDC authentication"
-- "Validate my CloudronManifest.json file"
-- "Check my Dockerfile for Cloudron best practices"
-- "Show me how to configure addons in CloudronManifest.json"
-- "What's the best practice for Dockerfile in Cloudron packages?"
+`cloudron_packaging_guide`, `cloudron_scaffold_package`, `cloudron_validate_package`, `cloudron_fetch_package_example`, and the `cloudron://packaging-guide` resource.
 
 ## Development
 
-### Setup
-
-```bash
-git clone https://github.com/halecraft/mcp-cloudron.git
-cd mcp-cloudron
-pnpm install
+```shell
+pnpm verify            # format, types, unit tests
+pnpm test:integration  # read-only smoke test against a real Cloudron (needs the env vars)
 ```
 
-### Build
+Unit tests run against a fake Cloudron that only accepts routes which exist in every supported Cloudron version. The route table in `tests/fixtures/cloudron-routes.json` is extracted from Cloudron's own server source:
 
-```bash
-pnpm build
+```shell
+git clone --depth 1 --branch v10.1.6 https://git.cloudron.io/platform/box.git /tmp/box
+node scripts/extract-cloudron-routes.mjs /tmp/box 10.1.6
 ```
 
-### Run Locally
+Add a new Cloudron release the same way; a tool that calls a route the release dropped will then fail its tests.
 
-```bash
-export CLOUDRON_BASE_URL="https://your-instance.com"
-export CLOUDRON_API_TOKEN="your-token"
-pnpm start
-```
-
-### Test
-
-```bash
-pnpm test              # Unit tests
-pnpm test:integration  # Integration tests (requires real Cloudron)
-pnpm verify            # All checks (format, tests, types)
-```
-
-## API Reference
-
-This server wraps the [Cloudron REST API](https://docs.cloudron.io/api/). See [TECHNICAL.md](TECHNICAL.md) for detailed architecture documentation and API coverage analysis.
-
-## Known Limitations
-
-- `cloudron_configure_app` - May return 404 on some Cloudron versions
-- Pagination not exposed for list operations
-
-## Community
-
-- 💬 [Cloudron Forum](https://forum.cloudron.io) - Discussion and support
-- 🐛 [Issue Tracker](https://github.com/halecraft/mcp-cloudron/issues) - Report bugs
-- 💡 [Feature Requests](https://github.com/halecraft/mcp-cloudron/issues/new?labels=enhancement) - Suggest improvements
-
-## Related Projects
-
-- [Model Context Protocol](https://modelcontextprotocol.io) - MCP documentation
-- [Cloudron](https://cloudron.io) - Self-hosted app platform
-- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+The vendored OpenAPI files under `docs/` are useful for request and response shapes but are older than Cloudron 9; where they disagree with the route table, the route table wins.
 
 ## License
 
-MIT - See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions welcome! Please open an issue or submit a pull request.
+MIT. See [LICENSE](LICENSE).

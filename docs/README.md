@@ -99,3 +99,5 @@ mail_{domain}_enable.json                               volumes.json
 mail_{domain}_lists_{name}.json
 ```
 
+
+> **Note:** these OpenAPI files predate Cloudron 9 and list several routes that no longer exist (`/system/disk_usage`, `/updater/updates`, `/backups/create`...). The authoritative route list is `tests/fixtures/cloudron-routes.json`, extracted from the Cloudron server source. See the Development section of the main README.
